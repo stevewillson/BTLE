@@ -7,6 +7,7 @@
 #ifndef BTLE_RX_H
 #define BTLE_RX_H
 
+#include "btle_utility.h"
 #include "common.h"
 #include <ctype.h>
 #include <errno.h>
@@ -34,7 +35,6 @@
 #endif
 
 // SOME BASIC SIGNAL DEFINITION
-
 #define SAMPLE_PER_SYMBOL 4 // 4M sampling rate
 
 #define LEN_BUF_IN_SAMPLE \

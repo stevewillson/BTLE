@@ -31,7 +31,7 @@ endif()
 add_executable(btle_tx btle_tx.c)
 install(TARGETS btle_tx RUNTIME DESTINATION ${INSTALL_DEFAULT_BINDIR})
 
-add_executable(btle_rx btle_rx.c)
+add_executable(btle_rx btle_rx.c btle_utility.c)
 install(TARGETS btle_rx RUNTIME DESTINATION ${INSTALL_DEFAULT_BINDIR})
 
 IF (USE_BLADERF MATCHES 1)

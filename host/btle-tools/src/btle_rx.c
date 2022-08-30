@@ -2,7 +2,7 @@
 
 #include "../include/btle_rx.h"
 
-// SOME SYS STUFF
+// SYS STUFF
 static inline int
 TimevalDiff(const struct timeval *a, const struct timeval *b)
 {
@@ -75,7 +75,7 @@ write_dummy_entry()
     write_packet_to_file(fh_pcap_store, 10, pkt, 2, 0xFFFFFFF2);
     write_packet_to_file(fh_pcap_store, 10, pkt, 3, 0xFFFFFFF3);
 }
-// END SOME SYS STUFF
+// END SYS STUFF
 
 volatile int rx_buf_offset; // remember to initialize it!
 
@@ -100,7 +100,7 @@ rx_callback(hackrf_transfer *transfer)
     }
     // printf("%d\n", transfer->valid_length); // !!!!it is 262144 always!!!!
     // Now it is 4096. Defined in hackrf.c lib_device->buffer_size
-    return (0);
+    return EXIT_SUCCESS;
 }
 
 int
@@ -127,7 +127,7 @@ init_board()
     signal(SIGABRT, &sigint_callback_handler);
 #endif
 
-    return (0);
+    return EXIT_SUCCESS;
 }
 
 int
@@ -160,7 +160,7 @@ open_board(uint64_t        freq_hz,
                hackrf_error_name(result),
                result);
         print_usage();
-        return (-1);
+        return EXIT_FAILURE;
     }
 
     result = hackrf_set_freq(*device, freq_hz);
@@ -170,7 +170,7 @@ open_board(uint64_t        freq_hz,
                hackrf_error_name(result),
                result);
         print_usage();
-        return (-1);
+        return EXIT_FAILURE;
     }
 
     result = hackrf_set_sample_rate(*device, SAMPLE_PER_SYMBOL * 1000000ul);
@@ -180,7 +180,7 @@ open_board(uint64_t        freq_hz,
                hackrf_error_name(result),
                result);
         print_usage();
-        return (-1);
+        return EXIT_FAILURE;
     }
 
     result = hackrf_set_baseband_filter_bandwidth(
@@ -193,7 +193,7 @@ open_board(uint64_t        freq_hz,
             hackrf_error_name(result),
             result);
         print_usage();
-        return (-1);
+        return EXIT_FAILURE;
     }
 
     printf("Setting VGA gain to %d\n", gain);
@@ -204,7 +204,7 @@ open_board(uint64_t        freq_hz,
                hackrf_error_name(result),
                result);
         print_usage();
-        return (-1);
+        return EXIT_FAILURE;
     }
 
     printf("Setting LNA gain to %d\n", lnaGain);
@@ -215,7 +215,7 @@ open_board(uint64_t        freq_hz,
                hackrf_error_name(result),
                result);
         print_usage();
-        return (-1);
+        return EXIT_FAILURE;
     }
 
     printf(amp ? "Enabling amp\n" : "Disabling amp\n");
@@ -226,10 +226,10 @@ open_board(uint64_t        freq_hz,
                hackrf_error_name(result),
                result);
         print_usage();
-        return (-1);
+        return EXIT_FAILURE;
     }
 
-    return (0);
+    return EXIT_SUCCESS;
 }
 
 void
@@ -255,7 +255,7 @@ close_board(hackrf_device *device)
             printf("close_board: hackrf_stop_rx() failed: %s (%d)\n",
                    hackrf_error_name(result),
                    result);
-            return (-1);
+            return EXIT_FAILURE;
         }
 
         result = hackrf_close(device);
@@ -264,14 +264,14 @@ close_board(hackrf_device *device)
             printf("close_board: hackrf_close() failed: %s (%d)\n",
                    hackrf_error_name(result),
                    result);
-            return (-1);
+            return EXIT_FAILURE;
         }
 
-        return (0);
+        return EXIT_SUCCESS;
     }
     else
     {
-        return (-1);
+        return EXIT_FAILURE;
     }
 }
 
@@ -282,16 +282,19 @@ run_board(hackrf_device *device)
 {
     int result;
 
+    // provides the rx_callback function as the receive
+    // callback function for the hackrf
     result = hackrf_start_rx(device, rx_callback, NULL);
-    if (result != HACKRF_SUCCESS)
+    if (HACKRF_SUCCESS != result)
     {
-        printf("run_board: hackrf_start_rx() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
-        return (-1);
+        fprintf(stderr,
+                "run_board: hackrf_start_rx() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
+        return EXIT_FAILURE;
     }
 
-    return (0);
+    return EXIT_SUCCESS;
 }
 
 inline int
@@ -302,30 +305,30 @@ config_run_board(
 
     (*rf_dev) = dev;
 
-    if (init_board() != 0)
+    if (EXIT_SUCCESS != init_board())
     {
-        return (-1);
+        return EXIT_FAILURE;
     }
 
-    if (open_board(freq_hz, gain, lnaGain, amp, &dev) != 0)
+    if (EXIT_SUCCESS != open_board(freq_hz, gain, lnaGain, amp, &dev))
     {
         (*rf_dev) = dev;
-        return (-1);
+        return EXIT_FAILURE;
     }
 
     (*rf_dev) = dev;
-    if (run_board(dev) != 0)
+    if (EXIT_SUCCESS != run_board(dev))
     {
-        return (-1);
+        return EXIT_FAILURE;
     }
 
-    return (0);
+    return EXIT_SUCCESS;
 }
 
 void
 stop_close_board(hackrf_device *device)
 {
-    if (close_board(device) != 0)
+    if (EXIT_SUCCESS != close_board(device))
     {
         return;
     }
@@ -390,197 +393,18 @@ print_usage()
 }
 //----------------------------------print_usage----------------------------------
 
-//----------------------------------MISC MISC
-// MISC----------------------------------
-char *
-toupper_str(char *input_str, char *output_str)
-{
-    int len_str = strlen(input_str);
-    int i;
-
-    for (i = 0; i <= len_str; i++)
-    {
-        output_str[i] = toupper(input_str[i]);
-    }
-
-    return (output_str);
-}
-
-void
-octet_hex_to_bit(char *hex, char *bit)
-{
-    char tmp_hex[3];
-
-    tmp_hex[0] = hex[0];
-    tmp_hex[1] = hex[1];
-    tmp_hex[2] = 0;
-
-    int n = strtol(tmp_hex, NULL, 16);
-
-    bit[0] = 0x01 & (n >> 0);
-    bit[1] = 0x01 & (n >> 1);
-    bit[2] = 0x01 & (n >> 2);
-    bit[3] = 0x01 & (n >> 3);
-    bit[4] = 0x01 & (n >> 4);
-    bit[5] = 0x01 & (n >> 5);
-    bit[6] = 0x01 & (n >> 6);
-    bit[7] = 0x01 & (n >> 7);
-}
-
-void
-int_to_bit(int n, uint8_t *bit)
-{
-    bit[0] = 0x01 & (n >> 0);
-    bit[1] = 0x01 & (n >> 1);
-    bit[2] = 0x01 & (n >> 2);
-    bit[3] = 0x01 & (n >> 3);
-    bit[4] = 0x01 & (n >> 4);
-    bit[5] = 0x01 & (n >> 5);
-    bit[6] = 0x01 & (n >> 6);
-    bit[7] = 0x01 & (n >> 7);
-}
-
 /*!
- * @brief convert a 32 bit uint to a bit array
+ * @brief save physical samples to a file
  *
- * @param uint32_in 32 bit value
- * @param bit pointer to an 8 bit value
+ * @param IQ_sample pointer to an IQ sample buffer
+ * @param num_IQ_sample number of samples to save
+ * @param p_filename the filename to store the samples
  *
  * @return void
  */
 void
-uint32_to_bit_array(uint32_t uint32_in, uint8_t *bit)
-{
-    int      i;
-    uint32_t uint32_tmp = uint32_in;
-    for (i = 0; i < 32; i++)
-    {
-        bit[i]     = 0x01 & uint32_tmp;
-        uint32_tmp = (uint32_tmp >> 1);
-    }
-}
-
-void
-byte_array_to_bit_array(uint8_t *byte_in, int num_byte, uint8_t *bit)
-{
-    int i, j;
-    j = 0;
-    for (i = 0; i < num_byte * 8; i = i + 8)
-    {
-        int_to_bit(byte_in[j], bit + i);
-        j++;
-    }
-}
-
-int
-convert_hex_to_bit(char *hex, char *bit)
-{
-    int num_hex = strlen(hex);
-    while (hex[num_hex - 1] <= 32 || hex[num_hex - 1] >= 127)
-    {
-        num_hex--;
-    }
-
-    if (num_hex % 2 != 0)
-    {
-        printf("convert_hex_to_bit: Half octet is encountered! num_hex %d\n",
-               num_hex);
-        printf("%s\n", hex);
-        return (-1);
-    }
-
-    int num_bit = num_hex * 4;
-
-    int i, j;
-    for (i = 0; i < num_hex; i = i + 2)
-    {
-        j = i * 4;
-        octet_hex_to_bit(hex + i, bit + j);
-    }
-
-    return (num_bit);
-}
-
-void
-disp_bit(char *bit, int num_bit)
-{
-    int i, bit_val;
-    for (i = 0; i < num_bit; i++)
-    {
-        bit_val = bit[i];
-        if (i % 8 == 0 && i != 0)
-        {
-            printf(" ");
-        }
-        else if (i % 4 == 0 && i != 0)
-        {
-            printf("-");
-        }
-        printf("%d", bit_val);
-    }
-    printf("\n");
-}
-
-void
-disp_bit_in_hex(char *bit, int num_bit)
-{
-    int i, a;
-    for (i = 0; i < num_bit; i = i + 8)
-    {
-        a = bit[i] + bit[i + 1] * 2 + bit[i + 2] * 4 + bit[i + 3] * 8
-            + bit[i + 4] * 16 + bit[i + 5] * 32 + bit[i + 6] * 64
-            + bit[i + 7] * 128;
-        // a = bit[i+7] + bit[i+6]*2 + bit[i+5]*4 + bit[i+4]*8 + bit[i+3]*16 +
-        // bit[i+2]*32 + bit[i+1]*64 + bit[i]*128;
-        printf("%02x", a);
-    }
-    printf("\n");
-}
-
-void
-disp_hex(uint8_t *hex, int num_hex)
-{
-    int i;
-    for (i = 0; i < num_hex; i++)
-    {
-        printf("%02x", hex[i]);
-    }
-    printf("\n");
-}
-
-void
-disp_hex_in_bit(uint8_t *hex, int num_hex)
-{
-    int i, j, bit_val;
-
-    for (j = 0; j < num_hex; j++)
-    {
-
-        for (i = 0; i < 8; i++)
-        {
-            bit_val = (hex[j] >> i) & 0x01;
-            if (i == 4)
-            {
-                printf("-");
-            }
-            printf("%d", bit_val);
-        }
-
-        printf(" ");
-    }
-
-    printf("\n");
-}
-
-/*
- * brief: save a physical sample to a file
- * @param: IQ_sample - pointer to an IQ sample buffer
- *
- */
-void
 save_phy_sample(IQ_TYPE *p_IQ_sample, int num_IQ_sample, char *p_filename)
 {
-    int i;
 
     FILE *p_fp = fopen(p_filename, "w");
     if (NULL == p_fp)
@@ -589,7 +413,7 @@ save_phy_sample(IQ_TYPE *p_IQ_sample, int num_IQ_sample, char *p_filename)
         return;
     }
 
-    for (i = 0; i < num_IQ_sample; i++)
+    for (int i = 0; i < num_IQ_sample; i++)
     {
         // add a newline after 64 samples
         if (0 == i % 64)
@@ -604,23 +428,23 @@ save_phy_sample(IQ_TYPE *p_IQ_sample, int num_IQ_sample, char *p_filename)
 }
 
 void
-load_phy_sample(IQ_TYPE *IQ_sample, int num_IQ_sample, char *filename)
+load_phy_sample(IQ_TYPE *p_IQ_sample, int num_IQ_sample, char *p_filename)
 {
-    int i, tmp_val;
+    int tmp_val;
 
-    FILE *fp = fopen(filename, "r");
-    if (fp == NULL)
+    FILE *p_fp = fopen(p_filename, "r");
+    if (NULL == p_fp)
     {
         printf("load_phy_sample: fopen failed!\n");
         return;
     }
 
-    i = 0;
-    while (~feof(fp))
+    int i = 0;
+    while (~feof(p_fp))
     {
-        if (fscanf(fp, "%d,", &tmp_val))
+        if (fscanf(p_fp, "%d,", &tmp_val))
         {
-            IQ_sample[i] = tmp_val;
+            p_IQ_sample[i] = tmp_val;
             i++;
         }
         if (num_IQ_sample != -1)
@@ -634,30 +458,38 @@ load_phy_sample(IQ_TYPE *IQ_sample, int num_IQ_sample, char *filename)
     }
     printf("%d I/Q are read.\n", i);
 
-    fclose(fp);
+    fclose(p_fp);
 }
 
+/*!
+ * @brief save a physical sample to a file for matlab processing
+ *
+ * @param p_IQ_sample pointer to an IQ sample buffer
+ * @param num_IQ_sample
+ * @param p_filename the filename to store the samples
+ *
+ * @return void
+ */
 void
-save_phy_sample_for_matlab(IQ_TYPE *IQ_sample,
+save_phy_sample_for_matlab(IQ_TYPE *p_IQ_sample,
                            int      num_IQ_sample,
-                           char    *filename)
+                           char    *p_filename)
 {
-    int i;
 
-    FILE *fp = fopen(filename, "w");
+    FILE *fp = fopen(p_filename, "w");
     if (fp == NULL)
     {
         printf("save_phy_sample_for_matlab: fopen failed!\n");
         return;
     }
 
-    for (i = 0; i < num_IQ_sample; i++)
+    for (int i = 0; i < num_IQ_sample; i++)
     {
-        if (i % 64 == 0)
+        if (0 == i % 64)
         {
             fprintf(fp, "...\n");
         }
-        fprintf(fp, "%d ", IQ_sample[i]);
+        fprintf(fp, "%d ", p_IQ_sample[i]);
     }
     fprintf(fp, "\n");
 
@@ -811,14 +643,31 @@ scramble_byte(uint8_t       *byte_in,
         byte_out[i] = byte_in[i] ^ scramble_table_byte[i];
     }
 }
-//----------------------------------BTLE SPEC
-// related----------------------------------
+// END BTLE SPEC related
 
-//----------------------------------command line
-// parameters----------------------------------
-// Parse the command line arguments and return optional parameters as
-// variables.
-// Also performs some basic sanity checks on the parameters.
+/*!
+ * @brief Parse the command line arguments and return optional parameters as
+ * variables. Also performs some basic sanity checks on the parameters.
+ *
+ * INPUTS
+ * @param argc pointer to an IQ_TYPE (int8_t)
+ * @param argv how far to search
+ * OUTPUTS
+ * @param chan
+ * @param gain
+ * @param lnaGain
+ * @param amp
+ * @param access_addr
+ * @param crc_init
+ * @param verbose_flag
+ * @param raw_flag
+ * @param freq_hz
+ * @param access_mask
+ * @param hop_flag
+ * @param filename_pcap
+ *
+ * @return void
+ */
 void
 parse_commandline(
     // Inputs
@@ -898,7 +747,7 @@ parse_commandline(
                 // Code should only get here if a long option was given a
                 // non-null flag value.
                 printf("Check code!\n");
-                goto abnormal_quit;
+                goto ABNORMAL_QUIT;
                 break;
 
             case 'v':
@@ -914,7 +763,7 @@ parse_commandline(
                 break;
 
             case 'h':
-                goto abnormal_quit;
+                goto ABNORMAL_QUIT;
                 break;
 
             case 'c':
@@ -955,46 +804,45 @@ parse_commandline(
 
             case '?':
                 /* getopt_long already printed an error message. */
-                goto abnormal_quit;
+                goto ABNORMAL_QUIT;
 
             default:
-                goto abnormal_quit;
+                goto ABNORMAL_QUIT;
         }
     }
 
     if ((*chan) < 0 || (*chan) > MAX_CHANNEL_NUMBER)
     {
         printf("channel number must be within 0~%d!\n", MAX_CHANNEL_NUMBER);
-        goto abnormal_quit;
+        goto ABNORMAL_QUIT;
     }
 
     if ((*gain) < 0 || (*gain) > MAX_GAIN)
     {
         printf("rx gain must be within 0~%d!\n", MAX_GAIN);
-        goto abnormal_quit;
+        goto ABNORMAL_QUIT;
     }
 
     if ((*lnaGain) < 0 || (*lnaGain) > 40)
     {
         printf("lna gain must be within 0~%d!\n", 40);
-        goto abnormal_quit;
+        goto ABNORMAL_QUIT;
     }
 
     // Error if extra arguments are found on the command line
     if (optind < argc)
     {
         printf("Error: unknown/extra arguments specified on command line!\n");
-        goto abnormal_quit;
+        goto ABNORMAL_QUIT;
     }
 
     return;
 
-abnormal_quit:
+ABNORMAL_QUIT:
     print_usage();
-    exit(-1);
+    exit(EXIT_FAILURE);
 }
-//----------------------------------command line
-// parameters----------------------------------
+// END COMMAND LINE PARAMETERS
 
 //----------------------------------receiver----------------------------------
 
@@ -1017,25 +865,37 @@ uint8_t tmp_byte[2 + 37 + 3]; // header length + maximum payload length 37 + 3
 
 RECV_STATUS receiver_status;
 
+/*!
+ * @brief demodulate bytes of data
+ *
+ * @param p_rxp pointer to an array of samples
+ * @param num_byte number of bytes to demodulate
+ * @param p_out_byte pointer to a location to store the bytes
+ *
+ * @return void
+ */
 void
-demod_byte(IQ_TYPE *rxp, int num_byte, uint8_t *out_byte)
+demod_byte(IQ_TYPE *p_rxp, int num_byte, uint8_t *p_out_byte)
 {
-    int     i, j;
-    int     I0, Q0, I1, Q1;
+
+    int     I0;
+    int     Q0;
+    int     I1;
+    int     Q1;
     uint8_t bit_decision;
     int     sample_idx = 0;
 
-    for (i = 0; i < num_byte; i++)
+    for (int i = 0; i < num_byte; i++)
     {
-        out_byte[i] = 0;
-        for (j = 0; j < 8; j++)
+        p_out_byte[i] = 0;
+        for (int j = 0; j < 8; j++)
         {
-            I0           = rxp[sample_idx];
-            Q0           = rxp[sample_idx + 1];
-            I1           = rxp[sample_idx + 2];
-            Q1           = rxp[sample_idx + 3];
-            bit_decision = (I0 * Q1 - I1 * Q0) > 0 ? 1 : 0;
-            out_byte[i]  = out_byte[i] | (bit_decision << j);
+            I0            = p_rxp[sample_idx];
+            Q0            = p_rxp[sample_idx + 1];
+            I1            = p_rxp[sample_idx + 2];
+            Q1            = p_rxp[sample_idx + 3];
+            bit_decision  = (I0 * Q1 - I1 * Q0) > 0 ? 1 : 0;
+            p_out_byte[i] = p_out_byte[i] | (bit_decision << j);
 
             sample_idx = sample_idx + SAMPLE_PER_SYMBOL * 2;
         }
@@ -1129,6 +989,7 @@ search_unique_bits(IQ_TYPE  *rxp,
         //   demod_buf_offset = demod_buf_offset - demod_buf_len;
     }
 
+    // return -1 to indicate failure
     return (-1);
 }
 
@@ -1323,7 +1184,7 @@ parse_adv_pdu_payload_byte(uint8_t     *payload_byte,
         // return(-1);
     }
 
-    return (0);
+    return EXIT_SUCCESS;
 }
 
 int
@@ -1348,7 +1209,7 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
     {
         if (pdu_type == LL_RESERVED || pdu_type == LL_DATA1)
         {
-            return (0);
+            return EXIT_SUCCESS;
         }
         else if (pdu_type == LL_DATA2 || pdu_type == LL_CTRL)
         {
@@ -1498,9 +1359,9 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             ctrl_payload_type_3->IVm[2] = payload_byte[20];
             ctrl_payload_type_3->IVm[3] = payload_byte[19];
         }
-        else if (ctrl_pdu_type == LL_ENC_RSP)
+        else if (LL_ENC_RSP == ctrl_pdu_type)
         {
-            if (num_payload_byte != 13)
+            if (13 != num_payload_byte)
             {
                 printf(
                     "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
@@ -1526,12 +1387,12 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             ctrl_payload_type_4->IVs[2] = payload_byte[10];
             ctrl_payload_type_4->IVs[3] = payload_byte[9];
         }
-        else if (ctrl_pdu_type == LL_START_ENC_REQ
-                 || ctrl_pdu_type == LL_START_ENC_RSP
-                 || ctrl_pdu_type == LL_PAUSE_ENC_REQ
-                 || ctrl_pdu_type == LL_PAUSE_ENC_RSP)
+        else if ((LL_START_ENC_REQ == ctrl_pdu_type)
+                 || (LL_START_ENC_RSP == ctrl_pdu_type)
+                 || (LL_PAUSE_ENC_REQ == ctrl_pdu_type)
+                 || (LL_PAUSE_ENC_RSP == ctrl_pdu_type))
         {
-            if (num_payload_byte != 1)
+            if (1 != num_payload_byte)
             {
                 printf(
                     "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
@@ -1544,10 +1405,10 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
                 = (LL_CTRL_PDU_PAYLOAD_TYPE_5_6_10_11 *)ll_pdu_payload;
             ctrl_payload_type_5_6_10_11->Opcode = ctrl_pdu_type;
         }
-        else if (ctrl_pdu_type == LL_FEATURE_REQ
-                 || ctrl_pdu_type == LL_FEATURE_RSP)
+        else if ((LL_FEATURE_REQ == ctrl_pdu_type)
+                 || (LL_FEATURE_RSP == ctrl_pdu_type))
         {
-            if (num_payload_byte != 9)
+            if (9 != num_payload_byte)
             {
                 printf(
                     "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
@@ -1569,7 +1430,7 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             ctrl_payload_type_8_9->FeatureSet[6] = payload_byte[2];
             ctrl_payload_type_8_9->FeatureSet[7] = payload_byte[1];
         }
-        else if (ctrl_pdu_type == LL_VERSION_IND)
+        else if (LL_VERSION_IND == ctrl_pdu_type)
         {
             if (num_payload_byte != 6)
             {
@@ -2253,7 +2114,7 @@ receiver_controller(void     *rf_dev,
                         receiver_status.chm[3],
                         receiver_status.chm[4]);
                     receiver_status.hop = -1;
-                    return (0);
+                    return EXIT_SUCCESS;
                 }
 
                 printf("Hop: track start ...\n");
@@ -2373,7 +2234,7 @@ receiver_controller(void     *rf_dev,
             return (-1);
     }
 
-    return (0);
+    return EXIT_SUCCESS;
 }
 
 //---------------------------for offline
@@ -2388,12 +2249,20 @@ receiver_controller(void     *rf_dev,
 int
 main(int argc, char **argv)
 {
-
     uint64_t freq_hz;
-    int gain, lnaGain, chan, phase, rx_buf_offset_tmp, verbose_flag, raw_flag,
-        hop_flag;
+    int      gain;
+    int      lnaGain;
+    int      chan;
+    int      phase;
+    int      rx_buf_offset_tmp;
+    int      verbose_flag;
+    int      raw_flag;
+    int      hop_flag;
     uint8_t  amp;
-    uint32_t access_addr, access_addr_mask, crc_init, crc_init_internal;
+    uint32_t access_addr;
+    uint32_t access_addr_mask;
+    uint32_t crc_init;
+    uint32_t crc_init_internal;
     bool     run_flag = false;
     void    *rf_dev;
     IQ_TYPE *rxp;
@@ -2413,7 +2282,7 @@ main(int argc, char **argv)
                       &hop_flag,
                       &filename_pcap);
 
-    if (freq_hz == 123)
+    if (123 == freq_hz)
         freq_hz = get_freq_by_channel_number(chan);
 
     uint32_to_bit_array(access_addr_mask, access_bit_mask);
@@ -2439,7 +2308,7 @@ main(int argc, char **argv)
 
     // run cyclic recv in background
     do_exit = false;
-    if (config_run_board(freq_hz, gain, lnaGain, amp, &rf_dev) != 0)
+    if (EXIT_SUCCESS != config_run_board(freq_hz, gain, lnaGain, amp, &rf_dev))
     {
         if (rf_dev != NULL)
         {
@@ -2447,7 +2316,7 @@ main(int argc, char **argv)
         }
         else
         {
-            return (1);
+            return EXIT_FAILURE;
         }
     }
 
@@ -2471,7 +2340,7 @@ main(int argc, char **argv)
     do_exit       = false;
     phase         = 0;
     rx_buf_offset = 0;
-    while (do_exit == false)
+    while (false == do_exit)
     {
         // hackrf_is_streaming(hackrf_dev) == HACKRF_TRUE?
         /*
@@ -2556,5 +2425,5 @@ PROGRAM_QUIT:
 
     if (fh_pcap_store)
         fclose(fh_pcap_store);
-    return (0);
+    return EXIT_SUCCESS;
 }
