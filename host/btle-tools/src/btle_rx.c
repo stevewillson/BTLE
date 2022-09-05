@@ -86,7 +86,7 @@ volatile IQ_TYPE rx_buf[LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE];
  *
  * @param transfer
  *
- * @return int
+ * @return int - success value
  */
 int
 rx_callback(hackrf_transfer *transfer)
@@ -103,11 +103,18 @@ rx_callback(hackrf_transfer *transfer)
     return EXIT_SUCCESS;
 }
 
+/*!
+ * @brief initialize the hackrf board
+ *
+ * @param transfer
+ *
+ * @return int
+ */
 int
 init_board()
 {
     int result = hackrf_init();
-    if (result != HACKRF_SUCCESS)
+    if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_init() failed: %s (%d)\n",
                hackrf_error_name(result),
@@ -116,45 +123,61 @@ init_board()
         return (-1);
     }
 
-#ifdef _MSC_VER
-    SetConsoleCtrlHandler((PHANDLER_ROUTINE)sighandler, TRUE);
-#else
+    // use the same callback handler for all of the signals
     signal(SIGINT, &sigint_callback_handler);
     signal(SIGILL, &sigint_callback_handler);
     signal(SIGFPE, &sigint_callback_handler);
     signal(SIGSEGV, &sigint_callback_handler);
     signal(SIGTERM, &sigint_callback_handler);
     signal(SIGABRT, &sigint_callback_handler);
-#endif
 
     return EXIT_SUCCESS;
 }
 
+/*!
+ * @brief set the hackrf board frequency
+ *
+ * @param p_device pointer to the hackrf device
+ * @param freq_hz frequency in hertz
+ *
+ * @return int
+ */
 int
-board_set_freq(void *device, uint64_t freq_hz)
+board_set_freq(void *p_device, uint64_t freq_hz)
 {
-    int result = hackrf_set_freq((hackrf_device *)device, freq_hz);
-    if (result != HACKRF_SUCCESS)
+    int result = hackrf_set_freq((hackrf_device *)p_device, freq_hz);
+    if (HACKRF_SUCCESS != result)
     {
         printf("board_set_freq: hackrf_set_freq() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        return (-1);
+        return -1;
     }
-    return (HACKRF_SUCCESS);
+    return HACKRF_SUCCESS;
 }
 
+/*!
+ * @brief open a hackrf board
+ *
+ * @param freq_hz frequency in hertz
+ * @param gain gain value
+ * @param lnaGain lna gain value
+ * @param amp amp value (Boolean value, on / off)
+ * @param pp_device pointer to a pointer for a hackrf_device struct
+ *
+ * @return int
+ */
 inline int
 open_board(uint64_t        freq_hz,
            int             gain,
            int             lnaGain,
            uint8_t         amp,
-           hackrf_device **device)
+           hackrf_device **pp_device)
 {
     int result;
 
-    result = hackrf_open(device);
-    if (result != HACKRF_SUCCESS)
+    result = hackrf_open(pp_device);
+    if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_open() failed: %s (%d)\n",
                hackrf_error_name(result),
@@ -163,8 +186,8 @@ open_board(uint64_t        freq_hz,
         return EXIT_FAILURE;
     }
 
-    result = hackrf_set_freq(*device, freq_hz);
-    if (result != HACKRF_SUCCESS)
+    result = hackrf_set_freq(*pp_device, freq_hz);
+    if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_set_freq() failed: %s (%d)\n",
                hackrf_error_name(result),
@@ -173,8 +196,8 @@ open_board(uint64_t        freq_hz,
         return EXIT_FAILURE;
     }
 
-    result = hackrf_set_sample_rate(*device, SAMPLE_PER_SYMBOL * 1000000ul);
-    if (result != HACKRF_SUCCESS)
+    result = hackrf_set_sample_rate(*pp_device, SAMPLE_PER_SYMBOL * 1000000ul);
+    if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_set_sample_rate() failed: %s (%d)\n",
                hackrf_error_name(result),
@@ -184,8 +207,8 @@ open_board(uint64_t        freq_hz,
     }
 
     result = hackrf_set_baseband_filter_bandwidth(
-        *device, SAMPLE_PER_SYMBOL * 1000000ul / 2);
-    if (result != HACKRF_SUCCESS)
+        *pp_device, SAMPLE_PER_SYMBOL * 1000000ul / 2);
+    if (HACKRF_SUCCESS != result)
     {
         printf(
             "open_board: hackrf_set_baseband_filter_bandwidth() failed: %s "
@@ -197,8 +220,8 @@ open_board(uint64_t        freq_hz,
     }
 
     printf("Setting VGA gain to %d\n", gain);
-    result = hackrf_set_vga_gain(*device, gain);
-    if (result != HACKRF_SUCCESS)
+    result = hackrf_set_vga_gain(*pp_device, gain);
+    if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_set_vga_gain() failed: %s (%d)\n",
                hackrf_error_name(result),
@@ -208,8 +231,8 @@ open_board(uint64_t        freq_hz,
     }
 
     printf("Setting LNA gain to %d\n", lnaGain);
-    result = hackrf_set_lna_gain(*device, lnaGain);
-    if (result != HACKRF_SUCCESS)
+    result = hackrf_set_lna_gain(*pp_device, lnaGain);
+    if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_set_lna_gain() failed: %s (%d)\n",
                hackrf_error_name(result),
@@ -219,8 +242,8 @@ open_board(uint64_t        freq_hz,
     }
 
     printf(amp ? "Enabling amp\n" : "Disabling amp\n");
-    result = hackrf_set_amp_enable(*device, amp);
-    if (result != HACKRF_SUCCESS)
+    result = hackrf_set_amp_enable(*pp_device, amp);
+    if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_set_amp_enable() failed: %s (%d)\n",
                hackrf_error_name(result),
@@ -232,110 +255,155 @@ open_board(uint64_t        freq_hz,
     return EXIT_SUCCESS;
 }
 
+/*!
+ * @brief exit a hackrf board
+ *
+ * @param p_device pointer to a hackrf_device struct
+ *
+ * @return void
+ */
 void
-exit_board(hackrf_device *device)
+exit_board(hackrf_device *p_device)
 {
-    if (device != NULL)
+    if (NULL != p_device)
     {
         hackrf_exit();
         printf("hackrf_exit() done\n");
     }
 }
 
-inline int
-close_board(hackrf_device *device)
-{
-    int result;
-
-    if (device != NULL)
-    {
-        result = hackrf_stop_rx(device);
-        if (result != HACKRF_SUCCESS)
-        {
-            printf("close_board: hackrf_stop_rx() failed: %s (%d)\n",
-                   hackrf_error_name(result),
-                   result);
-            return EXIT_FAILURE;
-        }
-
-        result = hackrf_close(device);
-        if (result != HACKRF_SUCCESS)
-        {
-            printf("close_board: hackrf_close() failed: %s (%d)\n",
-                   hackrf_error_name(result),
-                   result);
-            return EXIT_FAILURE;
-        }
-
-        return EXIT_SUCCESS;
-    }
-    else
-    {
-        return EXIT_FAILURE;
-    }
-}
-
-/*
+/*!
+ * @brief close a hackrf board
+ *
+ * @param p_device pointer to a hackrf_device struct
+ *
+ * @return int success (0 - success, 1 - failure)
  */
 inline int
-run_board(hackrf_device *device)
+close_board(hackrf_device *p_device)
 {
-    int result;
+    int result = EXIT_SUCCESS;
+
+    if (p_device == NULL)
+    {
+        result = EXIT_FAILURE;
+        goto END_CLOSE_BOARD;
+    }
+
+    result = hackrf_stop_rx(p_device);
+    if (HACKRF_SUCCESS != result)
+    {
+        printf("close_board: hackrf_stop_rx() failed: %s (%d)\n",
+               hackrf_error_name(result),
+               result);
+        goto END_CLOSE_BOARD;
+    }
+
+    result = hackrf_close(p_device);
+    if (HACKRF_SUCCESS != result)
+    {
+        printf("close_board: hackrf_close() failed: %s (%d)\n",
+               hackrf_error_name(result),
+               result);
+        goto END_CLOSE_BOARD;
+    }
+
+END_CLOSE_BOARD:
+    return result;
+}
+
+/*!
+ * @brief start receiving from the hackrf
+ *
+ * @param p_device pointer to the device to start reading from
+ * @return void
+ */
+inline int
+run_board(hackrf_device *p_device)
+{
+    int result = EXIT_SUCCESS;
 
     // provides the rx_callback function as the receive
     // callback function for the hackrf
-    result = hackrf_start_rx(device, rx_callback, NULL);
+    result = hackrf_start_rx(p_device, rx_callback, NULL);
     if (HACKRF_SUCCESS != result)
     {
         fprintf(stderr,
                 "run_board: hackrf_start_rx() failed: %s (%d)\n",
                 hackrf_error_name(result),
                 result);
-        return EXIT_FAILURE;
+        goto END_RUN_BOARD;
     }
-
-    return EXIT_SUCCESS;
+END_RUN_BOARD:
+    return result;
 }
 
+/*!
+ * @brief configure the board and start receiving from it
+ *
+ * @param freq_hz pointer to the device to start reading from
+ * @param gain gain value for the board
+ * @param lnaGain lnaGain value
+ * @param amp
+ * @param pp_rf_dev pointer to a pointer that is the rf device
+ * @return success (0 - success, 1 - failure)
+ */
 inline int
 config_run_board(
-    uint64_t freq_hz, int gain, int lnaGain, uint8_t amp, void **rf_dev)
+    uint64_t freq_hz, int gain, int lnaGain, uint8_t amp, void **pp_rf_dev)
 {
-    hackrf_device *dev = NULL;
+    int            result = EXIT_SUCCESS;
+    hackrf_device *dev    = NULL;
 
-    (*rf_dev) = dev;
+    (*pp_rf_dev) = dev;
 
-    if (EXIT_SUCCESS != init_board())
+    result = init_board();
+    if (EXIT_SUCCESS != result)
     {
-        return EXIT_FAILURE;
+        goto END_CONFIG_RUN_BOARD;
     }
 
-    if (EXIT_SUCCESS != open_board(freq_hz, gain, lnaGain, amp, &dev))
+    result = open_board(freq_hz, gain, lnaGain, amp, &dev);
+    if (EXIT_SUCCESS != result)
     {
-        (*rf_dev) = dev;
-        return EXIT_FAILURE;
+        (*pp_rf_dev) = dev;
+        goto END_CONFIG_RUN_BOARD;
     }
 
-    (*rf_dev) = dev;
-    if (EXIT_SUCCESS != run_board(dev))
+    (*pp_rf_dev) = dev;
+    result       = run_board(dev);
+    if (EXIT_SUCCESS != result)
     {
-        return EXIT_FAILURE;
+        result = EXIT_FAILURE;
+        goto END_CONFIG_RUN_BOARD;
     }
 
-    return EXIT_SUCCESS;
+END_CONFIG_RUN_BOARD:
+    return result;
 }
 
+/*!
+ * @brief stop and close the board
+ *
+ * @param p_device pointer to the hackrf board
+ *
+ * @return void
+ */
 void
-stop_close_board(hackrf_device *device)
+stop_close_board(hackrf_device *p_device)
 {
-    if (EXIT_SUCCESS != close_board(device))
+    if (EXIT_SUCCESS != close_board(p_device))
     {
         return;
     }
-    exit_board(device);
+    exit_board(p_device);
 }
 
-//----------------------------------print_usage----------------------------------
+/*!
+ * @brief print a usage message for btle_rx
+ *
+ * @return void
+ */
 static void
 print_usage()
 {
@@ -391,7 +459,6 @@ print_usage()
     printf("      Store packets to pcap file.\n");
     printf("\nSee README for detailed information.\n");
 }
-//----------------------------------print_usage----------------------------------
 
 /*!
  * @brief save physical samples to a file
@@ -495,11 +562,8 @@ save_phy_sample_for_matlab(IQ_TYPE *p_IQ_sample,
 
     fclose(fp);
 }
-//----------------------------------MISC MISC
-// MISC----------------------------------
 
-//----------------------------------BTLE SPEC
-// related--------------------------------
+// BTLE SPEC related
 /**
  * Static table used for the table_driven implementation.
  *****************************************************************************/
@@ -877,7 +941,6 @@ RECV_STATUS receiver_status;
 void
 demod_byte(IQ_TYPE *p_rxp, int num_byte, uint8_t *p_out_byte)
 {
-
     int     I0;
     int     Q0;
     int     I1;
