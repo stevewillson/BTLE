@@ -84,16 +84,16 @@ volatile IQ_TYPE rx_buf[LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE];
 /*!
  * @brief receive hackrf samples
  *
- * @param transfer
+ * @param p_transfer pointer to hackrf_transfer struct
  *
  * @return int - success value
  */
 int
-rx_callback(hackrf_transfer *transfer)
+rx_callback(hackrf_transfer *p_transfer)
 {
     int     i;
-    int8_t *p = (int8_t *)transfer->buffer;
-    for (i = 0; i < transfer->valid_length; i++)
+    int8_t *p = (int8_t *)p_transfer->buffer;
+    for (i = 0; i < p_transfer->valid_length; i++)
     {
         rx_buf[rx_buf_offset] = p[i];
         rx_buf_offset = (rx_buf_offset + 1) & (LEN_BUF - 1); // cyclic buffer
@@ -105,8 +105,6 @@ rx_callback(hackrf_transfer *transfer)
 
 /*!
  * @brief initialize the hackrf board
- *
- * @param transfer
  *
  * @return int
  */
@@ -120,7 +118,7 @@ init_board()
                hackrf_error_name(result),
                result);
         print_usage();
-        return (-1);
+        goto END_INIT_BOARD;
     }
 
     // use the same callback handler for all of the signals
@@ -131,7 +129,8 @@ init_board()
     signal(SIGTERM, &sigint_callback_handler);
     signal(SIGABRT, &sigint_callback_handler);
 
-    return EXIT_SUCCESS;
+END_INIT_BOARD:
+    return result;
 }
 
 /*!
@@ -140,7 +139,7 @@ init_board()
  * @param p_device pointer to the hackrf device
  * @param freq_hz frequency in hertz
  *
- * @return int
+ * @return int success status (0 - success, non-zero - failure)
  */
 int
 board_set_freq(void *p_device, uint64_t freq_hz)
@@ -151,9 +150,11 @@ board_set_freq(void *p_device, uint64_t freq_hz)
         printf("board_set_freq: hackrf_set_freq() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        return -1;
+        goto END_BOARD_SET_FREQ;
     }
-    return HACKRF_SUCCESS;
+
+END_BOARD_SET_FREQ:
+    return result;
 }
 
 /*!
@@ -174,7 +175,7 @@ open_board(uint64_t        freq_hz,
            uint8_t         amp,
            hackrf_device **pp_device)
 {
-    int result;
+    int result = HACKRF_SUCCESS;
 
     result = hackrf_open(pp_device);
     if (HACKRF_SUCCESS != result)
@@ -182,8 +183,7 @@ open_board(uint64_t        freq_hz,
         printf("open_board: hackrf_open() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        print_usage();
-        return EXIT_FAILURE;
+        goto END_OPEN_BOARD;
     }
 
     result = hackrf_set_freq(*pp_device, freq_hz);
@@ -192,8 +192,7 @@ open_board(uint64_t        freq_hz,
         printf("open_board: hackrf_set_freq() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        print_usage();
-        return EXIT_FAILURE;
+        goto END_OPEN_BOARD;
     }
 
     result = hackrf_set_sample_rate(*pp_device, SAMPLE_PER_SYMBOL * 1000000ul);
@@ -202,8 +201,7 @@ open_board(uint64_t        freq_hz,
         printf("open_board: hackrf_set_sample_rate() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        print_usage();
-        return EXIT_FAILURE;
+        goto END_OPEN_BOARD;
     }
 
     result = hackrf_set_baseband_filter_bandwidth(
@@ -215,8 +213,7 @@ open_board(uint64_t        freq_hz,
             "(%d)\n",
             hackrf_error_name(result),
             result);
-        print_usage();
-        return EXIT_FAILURE;
+        goto END_OPEN_BOARD;
     }
 
     printf("Setting VGA gain to %d\n", gain);
@@ -226,8 +223,7 @@ open_board(uint64_t        freq_hz,
         printf("open_board: hackrf_set_vga_gain() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        print_usage();
-        return EXIT_FAILURE;
+        goto END_OPEN_BOARD;
     }
 
     printf("Setting LNA gain to %d\n", lnaGain);
@@ -237,8 +233,7 @@ open_board(uint64_t        freq_hz,
         printf("open_board: hackrf_set_lna_gain() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        print_usage();
-        return EXIT_FAILURE;
+        goto END_OPEN_BOARD;
     }
 
     printf(amp ? "Enabling amp\n" : "Disabling amp\n");
@@ -248,11 +243,17 @@ open_board(uint64_t        freq_hz,
         printf("open_board: hackrf_set_amp_enable() failed: %s (%d)\n",
                hackrf_error_name(result),
                result);
-        print_usage();
-        return EXIT_FAILURE;
+        goto END_OPEN_BOARD;
     }
 
-    return EXIT_SUCCESS;
+END_OPEN_BOARD:
+
+    if (HACKRF_SUCCESS != result)
+    {
+        print_usage();
+    }
+
+    return result;
 }
 
 /*!
@@ -662,12 +663,13 @@ char *ADV_PDU_TYPE_STR[]
         "RESERVED5", "RESERVED6",      "RESERVED7",       "RESERVED8" };
 
 /**
- * Update the crc value with new data.
+ * @brief Update the crc value with new data.
  *
- * \param crc      The current crc value.
- * \param data     Pointer to a buffer of \a data_len bytes.
- * \param data_len Number of bytes in the \a data buffer.
- * \return         The updated crc value.
+ * @param crc      The current crc value.
+ * @param data     Pointer to a buffer of \a data_len bytes.
+ * @param data_len Number of bytes in the \a data buffer.
+ *
+ * @return         The updated crc value.
  *****************************************************************************/
 uint_fast32_t
 crc_update(uint_fast32_t crc, const void *data, size_t data_len)
@@ -695,16 +697,24 @@ crc24_byte(uint8_t *byte_in, int num_byte, uint32_t init_hex)
     return (crc);
 }
 
+/**
+ * @brief scramble a byte using a scramble table
+ *
+ * @param p_byte_in pointer to the input byte(s)
+ * @param num_byte the number of bytes to scramble
+ * @param p_scramble_table_byte pointer to a scramble table
+ * @param p_byte_out pointer to the output byte(s)
+ */
 void
-scramble_byte(uint8_t       *byte_in,
+scramble_byte(uint8_t       *p_byte_in,
               int            num_byte,
-              const uint8_t *scramble_table_byte,
-              uint8_t       *byte_out)
+              const uint8_t *p_scramble_table_byte,
+              uint8_t       *p_byte_out)
 {
     int i;
     for (i = 0; i < num_byte; i++)
     {
-        byte_out[i] = byte_in[i] ^ scramble_table_byte[i];
+        p_byte_out[i] = p_byte_in[i] ^ p_scramble_table_byte[i];
     }
 }
 // END BTLE SPEC related
@@ -948,19 +958,24 @@ demod_byte(IQ_TYPE *p_rxp, int num_byte, uint8_t *p_out_byte)
     uint8_t bit_decision;
     int     sample_idx = 0;
 
+    // iterate num_byte times
     for (int i = 0; i < num_byte; i++)
     {
+        // set the out byte to 0
         p_out_byte[i] = 0;
         for (int j = 0; j < 8; j++)
         {
-            I0            = p_rxp[sample_idx];
-            Q0            = p_rxp[sample_idx + 1];
-            I1            = p_rxp[sample_idx + 2];
-            Q1            = p_rxp[sample_idx + 3];
-            bit_decision  = (I0 * Q1 - I1 * Q0) > 0 ? 1 : 0;
+            // get the I0, Q0, I1, and Q1 samples
+            I0 = p_rxp[sample_idx];
+            Q0 = p_rxp[sample_idx + 1];
+            I1 = p_rxp[sample_idx + 2];
+            Q1 = p_rxp[sample_idx + 3];
+            // set the bit based on the I/Q samples
+            bit_decision = (I0 * Q1 - I1 * Q0) > 0 ? 1 : 0;
+            // pack the out byte with 8 bits
             p_out_byte[i] = p_out_byte[i] | (bit_decision << j);
-
-            sample_idx = sample_idx + SAMPLE_PER_SYMBOL * 2;
+            // advance the sample index
+            sample_idx = sample_idx + (SAMPLE_PER_SYMBOL * 2);
         }
     }
 }
@@ -1000,14 +1015,12 @@ search_unique_bits(IQ_TYPE  *rxp,
     // demod_buf_preamble_access[SAMPLE_PER_SYMBOL][LEN_DEMOD_BUF_PREAMBLE_ACCESS]
     // memset(demod_buf_preamble_access, 0,
     // SAMPLE_PER_SYMBOL*LEN_DEMOD_BUF_PREAMBLE_ACCESS);
-    memset(demod_buf_access, 0, SAMPLE_PER_SYMBOL * LEN_DEMOD_BUF_ACCESS);
-    for (i = 0; i < search_len * SAMPLE_PER_SYMBOL * 2;
+    memset(demod_buf_access, 0, (SAMPLE_PER_SYMBOL * LEN_DEMOD_BUF_ACCESS));
+
+    for (i = 0; i < (search_len * SAMPLE_PER_SYMBOL * 2);
          i = i + (SAMPLE_PER_SYMBOL * 2))
     {
         sp = ((demod_buf_offset - demod_buf_len + 1) & (demod_buf_len - 1));
-        // sp = (demod_buf_offset-demod_buf_len+1);
-        // if (sp>=demod_buf_len)
-        //   sp = sp - demod_buf_len;
 
         for (j = 0; j < (SAMPLE_PER_SYMBOL * 2); j = j + 2)
         {
@@ -1017,8 +1030,7 @@ search_unique_bits(IQ_TYPE  *rxp,
             q1 = rxp[i + j + 3];
 
             phase_idx = j / 2;
-            // demod_buf_preamble_access[phase_idx][demod_buf_offset] = (i0*q1 -
-            // i1*q0) > 0? 1: 0;
+
             demod_buf_access[phase_idx][demod_buf_offset]
                 = (i0 * q1 - i1 * q0) > 0 ? 1 : 0;
 
@@ -1026,8 +1038,6 @@ search_unique_bits(IQ_TYPE  *rxp,
             unequal_flag = false;
             for (p = 0; p < demod_buf_len; p++)
             {
-                // if (demod_buf_preamble_access[phase_idx][k] !=
-                // unique_bits[p]) {
                 if (demod_buf_access[phase_idx][k] != unique_bits[p]
                     && unique_bits_mask[p])
                 {
@@ -1035,21 +1045,16 @@ search_unique_bits(IQ_TYPE  *rxp,
                     break;
                 }
                 k = ((k + 1) & (demod_buf_len - 1));
-                // k = (k + 1);
-                // if (k>=demod_buf_len)
-                //   k = k - demod_buf_len;
             }
 
-            if (unequal_flag == false)
+            if (false == unequal_flag)
             {
+                // return the hit index for the unique bit locations
                 return (i + j - (demod_buf_len - 1) * SAMPLE_PER_SYMBOL * 2);
             }
         }
 
         demod_buf_offset = ((demod_buf_offset + 1) & (demod_buf_len - 1));
-        // demod_buf_offset  = (demod_buf_offset+1);
-        // if (demod_buf_offset>=demod_buf_len)
-        //   demod_buf_offset = demod_buf_offset - demod_buf_len;
     }
 
     // return -1 to indicate failure
@@ -1899,9 +1904,19 @@ print_adv_pdu_payload(void        *adv_pdu_payload,
     printf(" CRC%d\n", crc_flag);
 }
 
-// demodulates and parses a packet
+/**
+ * @brief receive and parse a packet
+ *
+ * @param p_rxp_in pointer to a buffer for IQ values
+ * @param buf_len the length of the buffer
+ * @param channel_number channel to receive on
+ * @param access_addr the access address
+ * @param crc_init
+ * @param verbose_flag
+ * @param raw_flag
+ */
 void
-receiver(IQ_TYPE *rxp_in,
+receiver(IQ_TYPE *p_rxp_in,
          int      buf_len,
          int      channel_number,
          uint32_t access_addr,
@@ -1918,12 +1933,22 @@ receiver(IQ_TYPE *rxp_in,
     ADV_PDU_TYPE adv_pdu_type;
     LL_PDU_TYPE  ll_pdu_type;
 
-    IQ_TYPE *rxp = rxp_in;
-    int num_demod_byte, hit_idx, buf_len_eaten, adv_tx_add, adv_rx_add, ll_nesn,
-        ll_sn, ll_md, payload_len, time_diff, ll_ctrl_pdu_type, i;
-    int  num_symbol_left = buf_len / (SAMPLE_PER_SYMBOL * 2); // 2 for IQ
-    bool crc_flag;
-    bool adv_flag = (channel_number == 37 || channel_number == 38
+    IQ_TYPE *p_rxp = p_rxp_in;
+    int      num_demod_byte;
+    int      hit_idx;
+    int      buf_len_eaten;
+    int      adv_tx_add;
+    int      adv_rx_add;
+    int      ll_nesn;
+    int      ll_sn;
+    int      ll_md;
+    int      payload_len;
+    int      time_diff;
+    int      ll_ctrl_pdu_type;
+    int      i;
+    int      num_symbol_left = buf_len / (SAMPLE_PER_SYMBOL * 2); // 2 for IQ
+    bool     crc_flag;
+    bool     adv_flag = (channel_number == 37 || channel_number == 38
                      || channel_number == 39);
 
     if (pkt_count == 0)
@@ -1934,15 +1959,16 @@ receiver(IQ_TYPE *rxp_in,
 
     uint32_to_bit_array(access_addr, access_bit);
     buf_len_eaten = 0;
-    while (1)
+    for (;;)
     {
 
-        hit_idx = search_unique_bits(rxp,
+        // search for unique bits within the receive buffer
+        hit_idx = search_unique_bits(p_rxp,
                                      num_symbol_left,
                                      access_bit,
                                      access_bit_mask,
                                      LEN_DEMOD_BUF_ACCESS);
-        if (hit_idx == -1)
+        if (-1 == hit_idx)
         {
             break;
         }
@@ -1953,36 +1979,54 @@ receiver(IQ_TYPE *rxp_in,
         // rxp[hit_idx+2], rxp[hit_idx+3], rxp[hit_idx+4], rxp[hit_idx+5],
         // rxp[hit_idx+6], rxp[hit_idx+7]);
 
+        // advance the buffer length consumed by the hit index value
         buf_len_eaten = buf_len_eaten + hit_idx;
+
         // printf("%d\n", buf_len_eaten);
 
         buf_len_eaten
             = buf_len_eaten
               + 8 * NUM_ACCESS_ADDR_BYTE * 2
                     * SAMPLE_PER_SYMBOL; // move to beginning of PDU header
-        rxp = rxp_in + buf_len_eaten;
+
+        // p_rxp now points to the start of the buffer for a BLE packet
+        p_rxp = p_rxp_in + buf_len_eaten;
 
         if (raw_flag)
+        {
             num_demod_byte = 42;
+        }
         else
+        {
             num_demod_byte = 2; // PDU header has 2 octets
+        }
 
+        // calculate how many bytes were consumed
+
+        // what is 8 for?
         buf_len_eaten
             = buf_len_eaten + 8 * num_demod_byte * 2 * SAMPLE_PER_SYMBOL;
-        // if ( buf_len_eaten > buf_len ) {
+
         if (buf_len_eaten > demod_buf_len)
         {
             break;
         }
 
-        demod_byte(rxp, num_demod_byte, tmp_byte);
+        // for a non-raw packet, demodulate 2 bytes
+        // we will advance the buffer by
+        demod_byte(p_rxp, num_demod_byte, tmp_byte);
 
         if (!raw_flag)
+        {
+            // raw flag is not set
             scramble_byte(tmp_byte,
                           num_demod_byte,
                           scramble_table[channel_number],
                           tmp_byte);
-        rxp             = rxp_in + buf_len_eaten;
+        }
+
+        p_rxp = p_rxp_in + buf_len_eaten;
+
         num_symbol_left = (buf_len - buf_len_eaten) / (SAMPLE_PER_SYMBOL * 2);
 
         if (raw_flag)
@@ -2009,6 +2053,7 @@ receiver(IQ_TYPE *rxp_in,
             continue;
         }
 
+        // adv flag is set when on an advertising channel (37, 38, 39)
         if (adv_flag)
         {
             parse_adv_pdu_header_byte(tmp_byte,
@@ -2051,12 +2096,12 @@ receiver(IQ_TYPE *rxp_in,
             break;
         }
 
-        demod_byte(rxp, num_demod_byte, tmp_byte + 2);
+        demod_byte(p_rxp, num_demod_byte, tmp_byte + 2);
         scramble_byte(tmp_byte + 2,
                       num_demod_byte,
                       scramble_table[channel_number] + 2,
                       tmp_byte + 2);
-        rxp             = rxp_in + buf_len_eaten;
+        p_rxp           = p_rxp_in + buf_len_eaten;
         num_symbol_left = (buf_len - buf_len_eaten) / (SAMPLE_PER_SYMBOL * 2);
 
         crc_flag = crc_check(tmp_byte, payload_len + 2, crc_init);
