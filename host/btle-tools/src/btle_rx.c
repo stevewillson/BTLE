@@ -1551,6 +1551,15 @@ parse_ll_pdu_header_byte(uint8_t     *byte_in,
     (*payload_len) = (byte_in[1] & 0x1F);
 }
 
+/**
+ * @brief
+ *
+ * @param byte_in
+ * @param pdu_type
+ * @param tx_add
+ * @param rx_add
+ * @param payload_len
+ */
 void
 parse_adv_pdu_header_byte(uint8_t      *byte_in,
                           ADV_PDU_TYPE *pdu_type,
@@ -2081,6 +2090,7 @@ receiver(IQ_TYPE *p_rxp_in,
         }
         else
         {
+            // do this for non-advertising channels
             parse_ll_pdu_header_byte(
                 tmp_byte, &ll_pdu_type, &ll_nesn, &ll_sn, &ll_md, &payload_len);
         }
@@ -2096,6 +2106,7 @@ receiver(IQ_TYPE *p_rxp_in,
             break;
         }
 
+        // demodulate the payload
         demod_byte(p_rxp, num_demod_byte, tmp_byte + 2);
         scramble_byte(tmp_byte + 2,
                       num_demod_byte,
@@ -2118,7 +2129,7 @@ receiver(IQ_TYPE *p_rxp_in,
                pkt_count,
                channel_number,
                access_addr);
-        if (filename_pcap != NULL)
+        if (NULL != filename_pcap)
             write_packet_to_file(fh_pcap_store,
                                  payload_len + 2,
                                  tmp_byte,
