@@ -79,10 +79,14 @@ write_dummy_entry()
 
 volatile int rx_buf_offset; // remember to initialize it!
 
+// rx_buf is LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE long
+// LEN_BUF - 2 * (4 * 4096) = 32K
+// LEN_BUF_MAX_NUM_PHY_SAMPLE - 47 * 8 * 4 * 2 = 3008
+// rx_buf is around 35K long
 volatile IQ_TYPE rx_buf[LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE];
 
 /*!
- * @brief receive hackrf samples
+ * @brief receive hackrf samples - set by hackrf_start_rx
  *
  * @param p_transfer pointer to hackrf_transfer struct
  *
@@ -91,11 +95,13 @@ volatile IQ_TYPE rx_buf[LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE];
 int
 rx_callback(hackrf_transfer *p_transfer)
 {
-    int     i;
-    int8_t *p = (int8_t *)p_transfer->buffer;
-    for (i = 0; i < p_transfer->valid_length; i++)
+    int     idx;
+    int8_t *p_trans_buf = (int8_t *)p_transfer->buffer;
+    for (idx = 0; idx < p_transfer->valid_length; idx++)
     {
-        rx_buf[rx_buf_offset] = p[i];
+        rx_buf[rx_buf_offset] = p_trans_buf[idx];
+
+        // wrap the buffer around by doing the & (LEN_BUF - 1)
         rx_buf_offset = (rx_buf_offset + 1) & (LEN_BUF - 1); // cyclic buffer
     }
     // printf("%d\n", transfer->valid_length); // !!!!it is 262144 always!!!!
@@ -1942,6 +1948,7 @@ receiver(IQ_TYPE *p_rxp_in,
     ADV_PDU_TYPE adv_pdu_type;
     LL_PDU_TYPE  ll_pdu_type;
 
+    // set the p_rxp to start at p_rxp_in
     IQ_TYPE *p_rxp = p_rxp_in;
     int      num_demod_byte;
     int      hit_idx;
@@ -1968,6 +1975,8 @@ receiver(IQ_TYPE *p_rxp_in,
 
     uint32_to_bit_array(access_addr, access_bit);
     buf_len_eaten = 0;
+
+    // loop until break
     for (;;)
     {
 
@@ -2356,10 +2365,9 @@ receiver_controller(void     *rf_dev,
     return EXIT_SUCCESS;
 }
 
-//---------------------------for offline
-// test-------------------------------------- IQ_TYPE tmp_buf[2097152];
-//---------------------------for offline
-// test--------------------------------------
+// for offline test
+IQ_TYPE tmp_buf[2097152];
+// for offline test
 
 /*
  * main entry point to code
@@ -2384,7 +2392,8 @@ main(int argc, char **argv)
     uint32_t crc_init_internal;
     bool     run_flag = false;
     void    *rf_dev;
-    IQ_TYPE *rxp;
+    IQ_TYPE *p_rxp;
+    int      result;
 
     parse_commandline(argc,
                       argv,
@@ -2427,7 +2436,13 @@ main(int argc, char **argv)
 
     // run cyclic recv in background
     do_exit = false;
-    if (EXIT_SUCCESS != config_run_board(freq_hz, gain, lnaGain, amp, &rf_dev))
+    result  = config_run_board(freq_hz, gain, lnaGain, amp, &rf_dev);
+
+    // PATCH FOR DEBUGGING - SLW
+    result = EXIT_SUCCESS;
+    // PATCH FOR DEBUGGING - SLW
+
+    if (EXIT_SUCCESS != result)
     {
         if (rf_dev != NULL)
         {
@@ -2472,6 +2487,8 @@ main(int argc, char **argv)
         // MAX_NUM_PHY_SAMPLE*2=LEN_BUF_MAX_NUM_PHY_SAMPLE
 
         rx_buf_offset_tmp = rx_buf_offset - LEN_BUF_MAX_NUM_PHY_SAMPLE;
+        // what is cross point 0?
+        // phase is set to 0 for this condition
         // cross point 0
         if (rx_buf_offset_tmp >= 0 && rx_buf_offset_tmp < (LEN_BUF / 2)
             && phase == 1)
@@ -2480,10 +2497,13 @@ main(int argc, char **argv)
             // (LEN_BUF/2), LEN_BUF_MAX_NUM_PHY_SAMPLE);
             phase = 0;
 
+            // copy from the start of the rx_buf to the memory address at
+            // LEN_BUF into rx_buf
+
             memcpy((void *)(rx_buf + LEN_BUF),
                    (void *)rx_buf,
                    LEN_BUF_MAX_NUM_PHY_SAMPLE * sizeof(IQ_TYPE));
-            rxp      = (IQ_TYPE *)(rx_buf + (LEN_BUF / 2));
+            p_rxp    = (IQ_TYPE *)(rx_buf + (LEN_BUF / 2));
             run_flag = true;
         }
 
@@ -2494,25 +2514,40 @@ main(int argc, char **argv)
             // (LEN_BUF/2), LEN_BUF_MAX_NUM_PHY_SAMPLE);
             phase = 1;
 
-            rxp      = (IQ_TYPE *)rx_buf;
+            p_rxp    = (IQ_TYPE *)rx_buf;
             run_flag = true;
         }
 
+        // PATCH FOR DEBUGGING
+        run_flag = true;
+        // PATCH FOR DEBUGGING
+
         if (run_flag)
         {
-#if 0
-      // ------------------------for offline test -------------------------------------
-      //save_phy_sample(rx_buf+buf_sp, LEN_BUF/2, "/home/jxj/git/BTLE/matlab/sample_iq_4msps.txt");
-      load_phy_sample(tmp_buf, 2097152, "/home/jxj/git/BTLE/matlab/sample_iq_4msps.txt");
-      receiver(tmp_buf, 2097152, 37, 0x8E89BED6, 0x555555, 1, 0);
-      break;
-      // ------------------------for offline test -------------------------------------
+#if 1
+            // save data to an offline file
+            // what is the format of this data as compared with the data for the
+            // UCSD researchers?
+            // ------------------------for offline test
+            // -------------------------------------
+            // save_phy_sample(rx_buf+buf_sp, LEN_BUF/2,
+            // "/home/user/BTLE/matlab/sample_iq_4msps.txt");
+
+            // this contains information that stored as a signed integer value
+            // check how the ucsd researchers save their data
+            // they most likely used a byte to store the data
+            load_phy_sample(
+                tmp_buf, 2097152, "/home/user/BTLE/matlab/sample_iq_4msps.txt");
+            receiver(tmp_buf, 2097152, 37, 0x8E89BED6, 0x555555, 1, 0);
+            break;
+            // ------------------------for offline test
+            // -------------------------------------
 #endif
 
             // REAL ONLINE RUN
             // receiver(rxp, LEN_BUF_MAX_NUM_PHY_SAMPLE+(LEN_BUF/2), chan);
             // start a receiver connected to the hackrf
-            receiver(rxp,
+            receiver(p_rxp,
                      (LEN_DEMOD_BUF_ACCESS - 1) * 2 * SAMPLE_PER_SYMBOL
                          + (LEN_BUF) / 2,
                      chan,

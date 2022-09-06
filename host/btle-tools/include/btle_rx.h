@@ -16,7 +16,7 @@
 #include <hackrf.h>
 #include <math.h>
 #include <netinet/in.h>
-#include <pthread.h>
+// #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -34,7 +34,7 @@
 #include <unistd.h>
 #endif
 
-// SOME BASIC SIGNAL DEFINITION
+// SOME BASIC SIGNAL DEFINITIONS
 #define SAMPLE_PER_SYMBOL 4 // 4M sampling rate
 
 #define LEN_BUF_IN_SAMPLE \
