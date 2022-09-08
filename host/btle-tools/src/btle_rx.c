@@ -2,6 +2,8 @@
 
 #include "../include/btle_rx.h"
 
+#define OFFLINE_TEST 0
+
 // SYS STUFF
 static inline int
 TimevalDiff(const struct timeval *a, const struct timeval *b)
@@ -27,7 +29,8 @@ const char *PCAP_HDR_TCPDUMP
       "\x05\xDC\x00\x00\x01\x00";
 const int PCAP_HDR_TCPDUMP_LEN = 24;
 // const char* PCAP_FILE_NAME = "btle_store.pcap";
-char *filename_pcap = NULL;
+char *filename_pcap    = NULL;
+char *filename_bin_pkt = NULL;
 FILE *fh_pcap_store;
 
 /*!
@@ -153,9 +156,10 @@ board_set_freq(void *p_device, uint64_t freq_hz)
     int result = hackrf_set_freq((hackrf_device *)p_device, freq_hz);
     if (HACKRF_SUCCESS != result)
     {
-        printf("board_set_freq: hackrf_set_freq() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
+        fprintf(stderr,
+                "board_set_freq: hackrf_set_freq() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_BOARD_SET_FREQ;
     }
 
@@ -186,27 +190,30 @@ open_board(uint64_t        freq_hz,
     result = hackrf_open(pp_device);
     if (HACKRF_SUCCESS != result)
     {
-        printf("open_board: hackrf_open() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
+        fprintf(stderr,
+                "open_board: hackrf_open() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_OPEN_BOARD;
     }
 
     result = hackrf_set_freq(*pp_device, freq_hz);
     if (HACKRF_SUCCESS != result)
     {
-        printf("open_board: hackrf_set_freq() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
+        fprintf(stderr,
+                "open_board: hackrf_set_freq() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_OPEN_BOARD;
     }
 
     result = hackrf_set_sample_rate(*pp_device, SAMPLE_PER_SYMBOL * 1000000ul);
     if (HACKRF_SUCCESS != result)
     {
-        printf("open_board: hackrf_set_sample_rate() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
+        fprintf(stderr,
+                "open_board: hackrf_set_sample_rate() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_OPEN_BOARD;
     }
 
@@ -214,41 +221,44 @@ open_board(uint64_t        freq_hz,
         *pp_device, SAMPLE_PER_SYMBOL * 1000000ul / 2);
     if (HACKRF_SUCCESS != result)
     {
-        printf(
-            "open_board: hackrf_set_baseband_filter_bandwidth() failed: %s "
-            "(%d)\n",
-            hackrf_error_name(result),
-            result);
+        fprintf(stderr,
+                "open_board: hackrf_set_baseband_filter_bandwidth() failed: %s "
+                "(%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_OPEN_BOARD;
     }
 
-    printf("Setting VGA gain to %d\n", gain);
+    fprintf(stdout, "Setting VGA gain to %d\n", gain);
     result = hackrf_set_vga_gain(*pp_device, gain);
     if (HACKRF_SUCCESS != result)
     {
-        printf("open_board: hackrf_set_vga_gain() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
+        fprintf(stderr,
+                "open_board: hackrf_set_vga_gain() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_OPEN_BOARD;
     }
 
-    printf("Setting LNA gain to %d\n", lnaGain);
+    fprintf(stdout, "Setting LNA gain to %d\n", lnaGain);
     result = hackrf_set_lna_gain(*pp_device, lnaGain);
     if (HACKRF_SUCCESS != result)
     {
-        printf("open_board: hackrf_set_lna_gain() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
+        fprintf(stderr,
+                "open_board: hackrf_set_lna_gain() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_OPEN_BOARD;
     }
 
-    printf(amp ? "Enabling amp\n" : "Disabling amp\n");
+    fprintf(stdout, amp ? "Enabling amp\n" : "Disabling amp\n");
     result = hackrf_set_amp_enable(*pp_device, amp);
     if (HACKRF_SUCCESS != result)
     {
-        printf("open_board: hackrf_set_amp_enable() failed: %s (%d)\n",
-               hackrf_error_name(result),
-               result);
+        fprintf(stderr,
+                "open_board: hackrf_set_amp_enable() failed: %s (%d)\n",
+                hackrf_error_name(result),
+                result);
         goto END_OPEN_BOARD;
     }
 
@@ -501,6 +511,31 @@ save_phy_sample(IQ_TYPE *p_IQ_sample, int num_IQ_sample, char *p_filename)
     fclose(p_fp);
 }
 
+/*!
+ * @brief save physical samples to a file in a binary format
+ *
+ * @param IQ_sample pointer to an IQ sample buffer
+ * @param num_IQ_sample number of samples to save
+ * @param p_filename the filename to store the samples
+ *
+ * @return void
+ */
+void
+save_bin_phy_sample(IQ_TYPE *p_IQ_sample, int num_IQ_sample, char *p_filename)
+{
+
+    FILE *p_fp = fopen(p_filename, "w");
+    if (NULL == p_fp)
+    {
+        printf("Error (save_bin_phy_sample): fopen failed!\n");
+        return;
+    }
+
+    // don't add a newline just write the samples to the file
+    fwrite(p_IQ_sample, sizeof(IQ_TYPE), num_IQ_sample, p_fp);
+    fclose(p_fp);
+}
+
 void
 load_phy_sample(IQ_TYPE *p_IQ_sample, int num_IQ_sample, char *p_filename)
 {
@@ -745,6 +780,7 @@ scramble_byte(uint8_t       *p_byte_in,
  * @param access_mask
  * @param hop_flag
  * @param filename_pcap
+ * @param filename_bin_pkt
  *
  * @return void
  */
@@ -765,7 +801,8 @@ parse_commandline(
     uint64_t *freq_hz,
     uint32_t *access_mask,
     int      *hop_flag,
-    char    **filename_pcap)
+    char    **filename_pcap,
+    char    **filename_bin_pkt)
 {
     printf("BLE sniffer. Xianjun Jiao. putaoshu@msn.com\n\n");
 
@@ -794,6 +831,8 @@ parse_commandline(
 
     (*filename_pcap) = 0;
 
+    (*filename_bin_pkt) = 0;
+
     while (1)
     {
         static struct option long_options[]
@@ -814,7 +853,7 @@ parse_commandline(
         /* getopt_long stores the option index here. */
         int option_index = 0;
         int c            = getopt_long(
-            argc, argv, "hc:g:l:ba:k:vrf:m:os:", long_options, &option_index);
+            argc, argv, "hc:g:l:ba:k:vrf:m:os:t:", long_options, &option_index);
 
         /* Detect the end of the options. */
         if (c == -1)
@@ -880,6 +919,10 @@ parse_commandline(
 
             case 's':
                 (*filename_pcap) = (char *)optarg;
+                break;
+
+            case 't':
+                (*filename_bin_pkt) = (char *)optarg;
                 break;
 
             case '?':
@@ -1949,22 +1992,24 @@ receiver(IQ_TYPE *p_rxp_in,
     LL_PDU_TYPE  ll_pdu_type;
 
     // set the p_rxp to start at p_rxp_in
-    IQ_TYPE *p_rxp = p_rxp_in;
-    int      num_demod_byte;
-    int      hit_idx;
-    int      buf_len_eaten;
-    int      adv_tx_add;
-    int      adv_rx_add;
-    int      ll_nesn;
-    int      ll_sn;
-    int      ll_md;
-    int      payload_len;
-    int      time_diff;
-    int      ll_ctrl_pdu_type;
-    int      i;
-    int      num_symbol_left = buf_len / (SAMPLE_PER_SYMBOL * 2); // 2 for IQ
-    bool     crc_flag;
-    bool     adv_flag = (channel_number == 37 || channel_number == 38
+    IQ_TYPE *p_rxp           = p_rxp_in;
+    IQ_TYPE *p_start_ble_pkt = p_rxp;
+
+    int  num_demod_byte;
+    int  hit_idx;
+    int  buf_len_eaten;
+    int  adv_tx_add;
+    int  adv_rx_add;
+    int  ll_nesn;
+    int  ll_sn;
+    int  ll_md;
+    int  payload_len;
+    int  time_diff;
+    int  ll_ctrl_pdu_type;
+    int  i;
+    int  num_symbol_left = buf_len / (SAMPLE_PER_SYMBOL * 2); // 2 for IQ
+    bool crc_flag;
+    bool adv_flag = (channel_number == 37 || channel_number == 38
                      || channel_number == 39);
 
     if (pkt_count == 0)
@@ -1998,7 +2043,8 @@ receiver(IQ_TYPE *p_rxp_in,
         // rxp[hit_idx+6], rxp[hit_idx+7]);
 
         // advance the buffer length consumed by the hit index value
-        buf_len_eaten = buf_len_eaten + hit_idx;
+        buf_len_eaten   = buf_len_eaten + hit_idx;
+        p_start_ble_pkt = p_rxp_in + buf_len_eaten;
 
         // printf("%d\n", buf_len_eaten);
 
@@ -2007,7 +2053,7 @@ receiver(IQ_TYPE *p_rxp_in,
               + 8 * NUM_ACCESS_ADDR_BYTE * 2
                     * SAMPLE_PER_SYMBOL; // move to beginning of PDU header
 
-        // p_rxp now points to the start of the buffer for a BLE packet
+        // p_rxp now points to the start of the PDU header for a BLE packet
         p_rxp = p_rxp_in + buf_len_eaten;
 
         if (raw_flag)
@@ -2021,10 +2067,14 @@ receiver(IQ_TYPE *p_rxp_in,
 
         // calculate how many bytes were consumed
 
-        // what is 8 for?
+        // what is 8 for? - it's probably how many symbols there are in a byte
+        // (each symbol is 1 bit)
         buf_len_eaten
-            = buf_len_eaten + 8 * num_demod_byte * 2 * SAMPLE_PER_SYMBOL;
+            = buf_len_eaten
+              + SYMBOL_PER_BYTE * num_demod_byte * 2 * SAMPLE_PER_SYMBOL;
 
+        // this could lose a sample if the buf_len_eaten is on the border of a
+        // demod_buf_len
         if (buf_len_eaten > demod_buf_len)
         {
             break;
@@ -2138,6 +2188,35 @@ receiver(IQ_TYPE *p_rxp_in,
                pkt_count,
                channel_number,
                access_addr);
+
+        // write the received samples to a file, keep track of the start of the
+        // packet (hit_idx)
+        // TODO - SLW
+        // use buf_len_eaten - hit_idx to calculate how many bytes to write to a
+        // file
+        if (NULL != filename_bin_pkt)
+        {
+            // use
+            char filename_bin_pkt_out[MAX_FILENAME_LENGTH] = { 0 };
+
+            // create the file name
+            snprintf(filename_bin_pkt_out,
+                     MAX_FILENAME_LENGTH,
+                     "%s-%d.%d",
+                     filename_bin_pkt,
+                     (int)time_current_pkt.tv_sec,
+                     (int)time_current_pkt.tv_usec);
+            int num_samples = p_rxp - p_start_ble_pkt;
+
+            fprintf(stderr,
+                    "Writing binary samples for file: %s\n",
+                    filename_bin_pkt_out);
+
+            // save the samples to a file
+            save_bin_phy_sample(
+                p_start_ble_pkt, num_samples, filename_bin_pkt_out);
+        }
+
         if (NULL != filename_pcap)
             write_packet_to_file(fh_pcap_store,
                                  payload_len + 2,
@@ -2408,7 +2487,8 @@ main(int argc, char **argv)
                       &freq_hz,
                       &access_addr_mask,
                       &hop_flag,
-                      &filename_pcap);
+                      &filename_pcap,
+                      &filename_bin_pkt);
 
     if (123 == freq_hz)
         freq_hz = get_freq_by_channel_number(chan);
@@ -2417,7 +2497,8 @@ main(int argc, char **argv)
 
     printf(
         "Cmd line input: chan %d, freq %ldMHz, access addr %08x, crc init %06x "
-        "raw %d verbose %d rx %ddB (%s) file=%s\n",
+        "raw %d verbose %d rx %ddB (%s) file=%s binary packet file base "
+        "name=%s\n",
         chan,
         freq_hz / 1000000,
         access_addr,
@@ -2426,7 +2507,8 @@ main(int argc, char **argv)
         verbose_flag,
         gain,
         board_name,
-        filename_pcap);
+        filename_pcap,
+        filename_bin_pkt);
 
     if (filename_pcap != NULL)
     {
@@ -2438,9 +2520,11 @@ main(int argc, char **argv)
     do_exit = false;
     result  = config_run_board(freq_hz, gain, lnaGain, amp, &rf_dev);
 
+#if OFFLINE_TEST
     // PATCH FOR DEBUGGING - SLW
     result = EXIT_SUCCESS;
-    // PATCH FOR DEBUGGING - SLW
+// PATCH FOR DEBUGGING - SLW
+#endif
 
     if (EXIT_SUCCESS != result)
     {
@@ -2517,14 +2601,16 @@ main(int argc, char **argv)
             p_rxp    = (IQ_TYPE *)rx_buf;
             run_flag = true;
         }
-
+#if OFFLINE_TEST
         // PATCH FOR DEBUGGING
         run_flag = true;
         // PATCH FOR DEBUGGING
+#endif
 
         if (run_flag)
         {
-#if 1
+
+#if OFFLINE_TEST
             // save data to an offline file
             // what is the format of this data as compared with the data for the
             // UCSD researchers?

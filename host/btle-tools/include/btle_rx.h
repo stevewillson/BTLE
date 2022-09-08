@@ -34,12 +34,18 @@
 #include <unistd.h>
 #endif
 
+#define MAX_FILENAME_LENGTH 32
+
 // SOME BASIC SIGNAL DEFINITIONS
 #define SAMPLE_PER_SYMBOL 4 // 4M sampling rate
+// #define SAMPLE_PER_SYMBOL 8 // 8M sampling rate - best practice from the
+// hackrf manual
+#define SYMBOL_PER_BYTE 8 // Each symbol is 1 bit
 
 #define LEN_BUF_IN_SAMPLE \
-    (4 * 4096) // 4096 samples = ~1ms for 4Msps; ATTENTION each rx callback get
-               // hackrf.c:lib_device->buffer_size samples!!!
+    (SAMPLE_PER_SYMBOL    \
+     * 4096) // 4096 samples = ~1ms for 4Msps; ATTENTION each rx callback get
+             // hackrf.c:lib_device->buffer_size samples!!!
 #define LEN_BUF           (LEN_BUF_IN_SAMPLE * 2)
 #define LEN_BUF_IN_SYMBOL (LEN_BUF_IN_SAMPLE / SAMPLE_PER_SYMBOL)
 
