@@ -9,11 +9,31 @@ end
 if nargin == 2
 % 'sample_iq_4msps.txt'
     filename = varargin{1};
-    a = load(filename);
-    a = a';
-    a = a(:)';
-%     a = a(2:end-1);
-    a = a(1:2:end) + 1i.*a(2:2:end);
+%     commented out to use a binary file
+%     a = load(filename);
+%     a = a';
+%     a = a(:)';
+% %     a = a(2:end-1);
+%     a = a(1:2:end) + 1i.*a(2:2:end);
+
+    % open the sample file, set the file to fid
+    fid = fopen(filename, 'r');
+
+    % create a signal matrix, specify the precision as 'float' (32bits of data)
+    % reads in the file starting at the beginning
+    [signal, ~] = fread(fid, 'int8');
+
+    % close the file handle
+    fclose(fid);
+
+    % moves samples 1,3,5,7... to the 2nd column
+    signal = reshape(signal, 2, []).';
+
+    % make the 2nd column imaginary numbers and add it to the first column
+    % makes the matrix into a column matrix
+    signal = signal(:,1) + 1i * signal(:,2);
+    a = signal;
+
 else
     symbol_rate = 1e6;
 
@@ -21,6 +41,7 @@ else
     cap_time = 1; % in second
     
     num_samples = cap_time*sampling_rate;
+
     if channel_number == 39
         freq = 2480000000;
     elseif channel_number == 37
@@ -37,11 +58,12 @@ else
     lna_gain = 40; %0-40dB, 8dB steps
     vga_gain = 6; %0-62dB, 2dB steps
 
-    cmd_str = ['hackrf_transfer -f ' num2str(freq) ' -a ' num2str(ant_gain) ' -l ' num2str(lna_gain) ' -g ' num2str(vga_gain) ' -s ' num2str(sampling_rate) ' -n ' num2str(num_samples) ' -b 1000000 -r hackrf_tmp_cap.bin'];
+    cmd_str = ['hackrf_transfer -f ' num2str(freq) ' -a ' num2str(ant_gain) ' -l ' num2str(lna_gain) ' -g ' num2str(vga_gain) ' -s ' num2str(sampling_rate) ' -n ' num2str(num_samples) ' -b 1750000 -r hackrf_tmp_cap.bin'];
     
     delete hackrf_tmp_cap.bin;
-    [status, cmd_out] = system(cmd_str, '-echo');
-%     disp(cmd_out);
+    [status, ~] = system(cmd_str, '-echo');
+    
+%     disp(md_out);
     if status == 0
         a = get_signal_from_hackrf_bin('hackrf_tmp_cap.bin', inf);
     else
@@ -51,7 +73,6 @@ else
 end
 
 pdu_type_str = {'ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved'};
-
 
 % subplot(3,1,1); plot(abs(a));
 % subplot(3,1,2); plot(angle(a));
@@ -105,7 +126,7 @@ while 1
     else
         crc_str = 'CRC:Bad';
     end
-    disp(['Pkt' num2str(pkt_count) ' Ch' num2str(channel_number) ' AccessAddr8E89BED6 ADV_PDU_Type' num2str(pdu_type) '(' pdu_type_str{pdu_type+1} ') TxAdd' num2str(tx_add) ' RxAdd' num2str(rx_add) ' PayloadLen' num2str(payload_len) ' ' payload_parse_result_str ' ' crc_str]);
+    disp(['Pkt' num2str(pkt_count) ' Ch' num2str(channel_number) ' AccessAddr:8E89BED6 ADV_PDU_Type' num2str(pdu_type) '(' pdu_type_str{pdu_type+1} ') TxAdd' num2str(tx_add) ' RxAdd' num2str(rx_add) ' PayloadLen' num2str(payload_len) ' ' payload_parse_result_str ' ' crc_str]);
     
     sp = sp + num_pdu_payload_crc_bits*sample_per_symbol;
 end
@@ -243,18 +264,20 @@ scramble_bits = bit_seq;
 
   
 function [pdu_type, tx_add, rx_add, payload_len] = parse_adv_pdu_header_bits(bits)
-% pdu_type_str = {'ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved'};
-pdu_type = bi2de(bits(1:4), 'right-msb');
-% disp(['   PDU Type: ' pdu_type_str{pdu_type+1}]);
+    % pdu_type_str = {'ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND', 'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved'};
+    pdu_type = bi2de(bits(1:4), 'right-msb');
+    % disp(['   PDU Type: ' pdu_type_str{pdu_type+1}]);
 
-tx_add = bits(7);
-% disp(['     Tx Add: ' num2str(tx_add)]);
+    tx_add = bits(7);
+    % disp(['     Tx Add: ' num2str(tx_add)]);
 
-rx_add = bits(8);
-% disp(['     Rx Add: ' num2str(rx_add)]);
+    rx_add = bits(8);
+    % disp(['     Rx Add: ' num2str(rx_add)]);
 
-payload_len = bi2de(bits(9:14), 'right-msb');
-% disp(['Payload Len: ' num2str(payload_len)]);
+    %     why 9-14 for the length? I think it should be 9-16 for 8 bits for the
+    %     length
+    payload_len = bi2de(bits(9:14), 'right-msb');
+    % disp(['Payload Len: ' num2str(payload_len)]);
 
 
 function bits = demod_bits(a, num_bits, sample_per_symbol)
@@ -301,7 +324,7 @@ while 1
         k = sp;
         unequal_flag = 0;
         for p = 1 : demod_buf_len
-            if demod_buf(j, k+1) ~= match_bit(p);
+            if demod_buf(j, k+1) ~= match_bit(p)
                 unequal_flag = 1;
                 break;
             end
