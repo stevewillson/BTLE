@@ -3,6 +3,7 @@
 #include "../include/btle_rx.h"
 
 #define OFFLINE_TEST 0
+#define DEBUG        1
 
 // SYS STUFF
 static inline int
@@ -43,6 +44,38 @@ init_pcap_file()
 {
     fh_pcap_store = fopen(filename_pcap, "wb");
     fwrite(PCAP_HDR_TCPDUMP, 1, PCAP_HDR_TCPDUMP_LEN, fh_pcap_store);
+}
+
+/**
+ * @brief search for bytes that are larger than 0x20
+ *
+ * @param p_start_addr
+ *
+ * @return pointer to the location where this is true
+ *
+ */
+IQ_TYPE *
+byte_search(IQ_TYPE *p_start_addr)
+{
+
+    IQ_TYPE *p_found_addr = p_start_addr;
+    if (NULL == p_start_addr)
+    {
+        fprintf(stderr, "Error (byte_search): NULL start addr");
+        goto END_BYTE_SEARCH;
+    }
+
+    for (;;)
+    {
+        if (*p_found_addr > 0x20)
+        {
+            goto END_BYTE_SEARCH;
+        }
+        p_found_addr++;
+    }
+
+END_BYTE_SEARCH:
+    return p_found_addr;
 }
 
 const uint8_t BTLE_HEADER_LEN = 10;
@@ -88,6 +121,8 @@ volatile int rx_buf_offset; // remember to initialize it!
 // rx_buf is around 35K long
 volatile IQ_TYPE rx_buf[LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE];
 
+#define TMP_BUF_SIZE 4096
+
 /*!
  * @brief receive hackrf samples - set by hackrf_start_rx
  *
@@ -124,7 +159,7 @@ init_board()
     if (HACKRF_SUCCESS != result)
     {
         printf("open_board: hackrf_init() failed: %s (%d)\n",
-               hackrf_error_name(result),
+               hackrf_error_name((enum hackrf_error)result),
                result);
         print_usage();
         goto END_INIT_BOARD;
@@ -158,7 +193,7 @@ board_set_freq(void *p_device, uint64_t freq_hz)
     {
         fprintf(stderr,
                 "board_set_freq: hackrf_set_freq() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_BOARD_SET_FREQ;
     }
@@ -192,7 +227,7 @@ open_board(uint64_t        freq_hz,
     {
         fprintf(stderr,
                 "open_board: hackrf_open() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_OPEN_BOARD;
     }
@@ -202,7 +237,7 @@ open_board(uint64_t        freq_hz,
     {
         fprintf(stderr,
                 "open_board: hackrf_set_freq() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_OPEN_BOARD;
     }
@@ -212,7 +247,7 @@ open_board(uint64_t        freq_hz,
     {
         fprintf(stderr,
                 "open_board: hackrf_set_sample_rate() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_OPEN_BOARD;
     }
@@ -224,7 +259,7 @@ open_board(uint64_t        freq_hz,
         fprintf(stderr,
                 "open_board: hackrf_set_baseband_filter_bandwidth() failed: %s "
                 "(%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_OPEN_BOARD;
     }
@@ -235,7 +270,7 @@ open_board(uint64_t        freq_hz,
     {
         fprintf(stderr,
                 "open_board: hackrf_set_vga_gain() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_OPEN_BOARD;
     }
@@ -246,7 +281,7 @@ open_board(uint64_t        freq_hz,
     {
         fprintf(stderr,
                 "open_board: hackrf_set_lna_gain() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_OPEN_BOARD;
     }
@@ -257,7 +292,7 @@ open_board(uint64_t        freq_hz,
     {
         fprintf(stderr,
                 "open_board: hackrf_set_amp_enable() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_OPEN_BOARD;
     }
@@ -311,7 +346,7 @@ close_board(hackrf_device *p_device)
     if (HACKRF_SUCCESS != result)
     {
         printf("close_board: hackrf_stop_rx() failed: %s (%d)\n",
-               hackrf_error_name(result),
+               hackrf_error_name((enum hackrf_error)result),
                result);
         goto END_CLOSE_BOARD;
     }
@@ -320,7 +355,7 @@ close_board(hackrf_device *p_device)
     if (HACKRF_SUCCESS != result)
     {
         printf("close_board: hackrf_close() failed: %s (%d)\n",
-               hackrf_error_name(result),
+               hackrf_error_name((enum hackrf_error)result),
                result);
         goto END_CLOSE_BOARD;
     }
@@ -347,7 +382,7 @@ run_board(hackrf_device *p_device)
     {
         fprintf(stderr,
                 "run_board: hackrf_start_rx() failed: %s (%d)\n",
-                hackrf_error_name(result),
+                hackrf_error_name((enum hackrf_error)result),
                 result);
         goto END_RUN_BOARD;
     }
@@ -1181,9 +1216,9 @@ parse_adv_pdu_payload_byte(uint8_t     *payload_byte,
 
         // payload_parse_result_str = ['AdvA:' AdvA ' InitA:' InitA];
     }
-    else if (pdu_type == CONNECT_REQ)
+    else if (CONNECT_REQ == pdu_type)
     {
-        if (num_payload_byte != 34)
+        if (34 != num_payload_byte)
         {
             printf(
                 "Error: Payload length %d bytes. Need to be 34 for PDU Type "
@@ -2043,8 +2078,20 @@ receiver(IQ_TYPE *p_rxp_in,
         // rxp[hit_idx+6], rxp[hit_idx+7]);
 
         // advance the buffer length consumed by the hit index value
+
+        // buf length eaten specifies where the first hit occurs
         buf_len_eaten   = buf_len_eaten + hit_idx;
-        p_start_ble_pkt = p_rxp_in + buf_len_eaten;
+        p_start_ble_pkt = p_rxp + buf_len_eaten - 100;
+
+        // copy the data off so that it doesn't get overwritten
+        IQ_TYPE  tmp_rx_buf[TMP_BUF_SIZE];
+        IQ_TYPE *p_tmp_rx_buf = tmp_rx_buf;
+
+#if DEBUG
+        // copy the memory to a temp buffer to see if it is being overwritten
+        memcpy((void *)tmp_rx_buf, (void *)p_start_ble_pkt, TMP_BUF_SIZE);
+
+#endif
 
         // printf("%d\n", buf_len_eaten);
 
@@ -2067,7 +2114,7 @@ receiver(IQ_TYPE *p_rxp_in,
 
         // calculate how many bytes were consumed
 
-        // what is 8 for? - it's probably how many symbols there are in a byte
+        // assume 8 represents how many symbols there are in a byte
         // (each symbol is 1 bit)
         buf_len_eaten
             = buf_len_eaten
@@ -2156,12 +2203,13 @@ receiver(IQ_TYPE *p_rxp_in,
 
         // num_pdu_payload_crc_bits = (payload_len+3)*8;
         num_demod_byte = (payload_len + 3);
+
         buf_len_eaten
-            = buf_len_eaten + 8 * num_demod_byte * 2 * SAMPLE_PER_SYMBOL;
+            = buf_len_eaten
+              + SYMBOL_PER_BYTE * num_demod_byte * 2 * SAMPLE_PER_SYMBOL;
         // if ( buf_len_eaten > buf_len ) {
         if (buf_len_eaten > demod_buf_len)
         {
-            // printf("\n");
             break;
         }
 
@@ -2171,6 +2219,7 @@ receiver(IQ_TYPE *p_rxp_in,
                       num_demod_byte,
                       scramble_table[channel_number] + 2,
                       tmp_byte + 2);
+
         p_rxp           = p_rxp_in + buf_len_eaten;
         num_symbol_left = (buf_len - buf_len_eaten) / (SAMPLE_PER_SYMBOL * 2);
 
@@ -2189,32 +2238,48 @@ receiver(IQ_TYPE *p_rxp_in,
                channel_number,
                access_addr);
 
-        // write the received samples to a file, keep track of the start of the
-        // packet (hit_idx)
-        // TODO - SLW
-        // use buf_len_eaten - hit_idx to calculate how many bytes to write to a
-        // file
+        // use the temporary buffer that the samples are stored in to write to
+        // disk this seems to avoid having the samples overwritten by the hackrf
+        // reads
         if (NULL != filename_bin_pkt)
         {
-            // use
-            char filename_bin_pkt_out[MAX_FILENAME_LENGTH] = { 0 };
-
             // create the file name
+            char filename_bin_pkt_out[MAX_FILENAME_LENGTH] = { 0 };
             snprintf(filename_bin_pkt_out,
                      MAX_FILENAME_LENGTH,
-                     "%s-%d.%d",
+                     "%s-%d_%d",
                      filename_bin_pkt,
                      (int)time_current_pkt.tv_sec,
                      (int)time_current_pkt.tv_usec);
             int num_samples = p_rxp - p_start_ble_pkt;
 
             fprintf(stderr,
-                    "Writing binary samples for file: %s\n",
-                    filename_bin_pkt_out);
+                    "Writing binary samples for file: %s\n%d samples\n",
+                    filename_bin_pkt_out,
+                    num_samples);
+
+#if DEBUG
+            // search for some larger values
+            // the receive buffer may be overwritten by new samples
+            // so we saved off 4096 samples when recieved to extract the signal
+            // from the temp buf
+            IQ_TYPE *found_start_addr = byte_search(p_tmp_rx_buf);
+            int      DISTANCE         = found_start_addr - p_tmp_rx_buf;
+
+            fprintf(stderr, "Start of bigger values: %p\n", found_start_addr);
+            fprintf(stderr,
+                    "Distance from the start of the packet: %d\n",
+                    DISTANCE);
+
+            if (1000 > DISTANCE)
+            {
+                fprintf(stderr, "Distance is %d.\n", DISTANCE);
+            }
+#endif
 
             // save the samples to a file
             save_bin_phy_sample(
-                p_start_ble_pkt, num_samples, filename_bin_pkt_out);
+                p_tmp_rx_buf, num_samples, filename_bin_pkt_out);
         }
 
         if (NULL != filename_pcap)
@@ -2245,6 +2310,25 @@ receiver(IQ_TYPE *p_rxp_in,
                                   adv_pdu_type,
                                   payload_len,
                                   crc_flag);
+
+            // check if the type is a CONNECT_REQ and then check the AdvA
+            if (CONNECT_REQ == adv_pdu_type)
+            {
+                uint64_t pdu_adva = 0;
+                memcpy(&pdu_adva,
+                       ((ADV_PDU_PAYLOAD_TYPE_5 *)(&adv_pdu_payload))->AdvA,
+                       6);
+                // 0x0000806fb05689a0 - target address, need to rearrange the
+                // bytes
+                uint64_t target_pdu_adva = 0x0000a08956b06f80;
+
+                if (pdu_adva == target_pdu_adva)
+                {
+                    fprintf(stderr,
+                            "\n\n\n FOUND A CON REQ TO THE LOCK!!! SAVE THE "
+                            "SAMPLE\n\n\n");
+                }
+            }
         }
         else
         {
@@ -2273,10 +2357,9 @@ receiver(IQ_TYPE *p_rxp_in,
         }
     }
 }
-//----------------------------------receiver----------------------------------
+// END RECEIVER
 
-//---------------------handle freq hop for channel mapping
-// 1FFFFFFFFF--------------------
+// handle freq hop for channel mapping 1FFFFFFFFF
 bool
 chm_is_full_map(uint8_t *chm)
 {
