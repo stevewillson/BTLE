@@ -34,7 +34,7 @@
 #include <unistd.h>
 #endif
 
-#define MAX_FILENAME_LENGTH 32
+#define MAX_FILENAME_LENGTH 64
 
 // SOME BASIC SIGNAL DEFINITIONS
 #define SAMPLE_PER_SYMBOL 4 // 4M sampling rate
@@ -42,11 +42,15 @@
 // hackrf manual
 #define SYMBOL_PER_BYTE 8 // Each symbol is 1 bit
 
-#define LEN_BUF_IN_SAMPLE \
-    (SAMPLE_PER_SYMBOL    \
-     * 4096) // 4096 samples = ~1ms for 4Msps; ATTENTION each rx callback get
-             // hackrf.c:lib_device->buffer_size samples!!!
-#define LEN_BUF           (LEN_BUF_IN_SAMPLE * 2)
+// 4 * 4096 = 16384
+#define LEN_BUF_IN_SAMPLE (SAMPLE_PER_SYMBOL * 4096)
+// 4096 samples = ~1ms for 4Msps; ATTENTION each rx callback get
+// hackrf.c:lib_device->buffer_size samples!!!
+
+// 16380 * 2 = 32768
+#define LEN_BUF (LEN_BUF_IN_SAMPLE * 2)
+
+// 16384 / 4 = 4096
 #define LEN_BUF_IN_SYMBOL (LEN_BUF_IN_SAMPLE / SAMPLE_PER_SYMBOL)
 
 // END SOME BASIC SIGNAL DEFINITION
@@ -57,9 +61,12 @@
 #define MAX_CHANNEL_NUMBER  39
 #define MAX_NUM_INFO_BYTE   (43)
 #define MAX_NUM_PHY_BYTE    (47)
-//#define MAX_NUM_PHY_SAMPLE
 //((MAX_NUM_PHY_BYTE*8*SAMPLE_PER_SYMBOL)+(LEN_GAUSS_FILTER*SAMPLE_PER_SYMBOL))
-#define MAX_NUM_PHY_SAMPLE         (MAX_NUM_PHY_BYTE * 8 * SAMPLE_PER_SYMBOL)
+
+// 47 * 8 * 4 = 1504
+#define MAX_NUM_PHY_SAMPLE (MAX_NUM_PHY_BYTE * 8 * SAMPLE_PER_SYMBOL)
+
+// 2 * 1504 = 3008
 #define LEN_BUF_MAX_NUM_PHY_SAMPLE (2 * MAX_NUM_PHY_SAMPLE)
 
 #define NUM_PREAMBLE_BYTE        (1)

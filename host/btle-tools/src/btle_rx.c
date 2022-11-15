@@ -116,17 +116,20 @@ write_dummy_entry()
 volatile int rx_buf_offset; // remember to initialize it!
 
 // rx_buf is LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE long
-// LEN_BUF - 2 * (4 * 4096) = 32K
-// LEN_BUF_MAX_NUM_PHY_SAMPLE - 47 * 8 * 4 * 2 = 3008
-// rx_buf is around 35K long
+// LEN_BUF = 2 * (4 * 4096) = 32768
+// LEN_BUF_MAX_NUM_PHY_SAMPLE = 47 * 8 * 4 * 2 = 3008
+// rx_buf is 35776 long
 volatile IQ_TYPE rx_buf[LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE];
 
-#define TMP_BUF_SIZE 4096
+#define TMP_BUF_SIZE 4096 * 2
 
 /*!
  * @brief receive hackrf samples - set by hackrf_start_rx
  *
  * @param p_transfer pointer to hackrf_transfer struct
+ *
+ * Receives data stored in the p_transfer->buffer and stores to the circular
+ * rx_buf. It receives p_transfer->valid_length bytes
  *
  * @return int - success value
  */
@@ -135,6 +138,9 @@ rx_callback(hackrf_transfer *p_transfer)
 {
     int     idx;
     int8_t *p_trans_buf = (int8_t *)p_transfer->buffer;
+#if 0
+    fprintf(stderr, "Receiving %d bytes.\n", p_transfer->valid_length);
+#endif
     for (idx = 0; idx < p_transfer->valid_length; idx++)
     {
         rx_buf[rx_buf_offset] = p_trans_buf[idx];
@@ -144,6 +150,8 @@ rx_callback(hackrf_transfer *p_transfer)
     }
     // printf("%d\n", transfer->valid_length); // !!!!it is 262144 always!!!!
     // Now it is 4096. Defined in hackrf.c lib_device->buffer_size
+    // SW - 10/26/22 - p_transfer->valid_length is 262144
+    // how does this interact with the ability to save off samples?
     return EXIT_SUCCESS;
 }
 
@@ -795,6 +803,63 @@ scramble_byte(uint8_t       *p_byte_in,
 }
 // END BTLE SPEC related
 
+// convenience routine to copy values from the receive buffer to a temporary
+// buffer
+/**
+ * @brief Copies values from rx_buf to a temporary buffer, handles when the
+ * p_src is close to the end of the buffer.
+ * @param p_dst - destination buffer
+ * @param p_src - source buffer to copy from
+ * @param length - the number of bytes to copy from p_src to p_dst
+ *
+ * @return void
+ */
+void
+tmp_buf_cpy(void *p_dst, void *p_src, int length)
+{
+    // rx_buf is the base address
+    //  end address is rx_buf + LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE
+
+    // check if the p_src + length is outside of the buffer
+    // if yes, calculate by how much
+    // if no, copy the value to the tmp_rx_buf
+#if 0
+    // print out the value of the rx_buf
+    fprintf(stderr, "Start address of rx_buf: %p\n", (void *)rx_buf);
+    fprintf(stderr,
+            "End address of rx_buf: %p\n",
+            ((void *)rx_buf + LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE));
+    fprintf(stderr, "Address of p_src: %p\n", (void *)p_src);
+    fprintf(stderr, "Length of copy: %d\n", length);
+
+#endif
+
+    if (((void *)rx_buf + LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE)
+        < p_src + length)
+    {
+        // p_src is too close to the end of the buffer
+        int first_buffer_bytes
+            = ((void *)rx_buf + LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE) - p_src;
+        int remaining_buffer_bytes = length - first_buffer_bytes;
+#if 0
+        fprintf(
+            stderr, "\n\n\nLength of first bytes: %d\n", first_buffer_bytes);
+        fprintf(
+            stderr, "Length of remaining bytes: %d\n", remaining_buffer_bytes);
+#endif
+
+        // copy the first part of the buffer
+        memcpy(p_dst, p_src, first_buffer_bytes);
+        // copy the remaining part from the start of the receive buffer
+        memcpy(
+            p_dst + first_buffer_bytes, (void *)rx_buf, remaining_buffer_bytes);
+    }
+    else
+    {
+        memcpy(p_dst, p_src, length);
+    }
+}
+
 /*!
  * @brief Parse the command line arguments and return optional parameters as
  * variables. Also performs some basic sanity checks on the parameters.
@@ -1007,33 +1072,36 @@ ABNORMAL_QUIT:
 //#define LEN_DEMOD_BUF_PREAMBLE_ACCESS ( (NUM_PREAMBLE_ACCESS_BYTE*8)-8 ) // to
 // get 2^x integer #define LEN_DEMOD_BUF_PREAMBLE_ACCESS 32 #define
 // LEN_DEMOD_BUF_PREAMBLE_ACCESS (NUM_PREAMBLE_ACCESS_BYTE*8)
-#define LEN_DEMOD_BUF_ACCESS (NUM_ACCESS_ADDR_BYTE * 8) // 32 = 2^5
+// 4 * 8 = 32
+#define LEN_DEMOD_BUF_ACCESS (NUM_ACCESS_ADDR_BYTE * 8)
 
 // static uint8_t
 // demod_buf_preamble_access[SAMPLE_PER_SYMBOL][LEN_DEMOD_BUF_PREAMBLE_ACCESS];
+
+// 8bit array that is [4][32]
 static uint8_t demod_buf_access[SAMPLE_PER_SYMBOL][LEN_DEMOD_BUF_ACCESS];
-// uint8_t preamble_access_byte[NUM_PREAMBLE_ACCESS_BYTE] = {0xAA, 0xD6, 0xBE,
-// 0x89, 0x8E};
+// uint8_t preamble_access_byte[NUM_PREAMBLE_ACCESS_BYTE] = {0xAA, 0xD6,
+// 0xBE, 0x89, 0x8E};
 uint8_t access_byte[NUM_ACCESS_ADDR_BYTE] = { 0xD6, 0xBE, 0x89, 0x8E };
 // uint8_t preamble_access_bit[NUM_PREAMBLE_ACCESS_BYTE*8];
 uint8_t access_bit[NUM_ACCESS_ADDR_BYTE * 8];
 uint8_t access_bit_mask[NUM_ACCESS_ADDR_BYTE * 8];
-uint8_t tmp_byte[2 + 37 + 3]; // header length + maximum payload length 37 + 3
-                              // octets CRC
+uint8_t tmp_byte[2 + 37 + 3]; // header length + maximum payload length 37 +
+                              // 3 octets CRC
 
 RECV_STATUS receiver_status;
 
 /*!
  * @brief demodulate bytes of data
  *
- * @param p_rxp pointer to an array of samples
+ * @param p_rx pointer to an array of samples
  * @param num_byte number of bytes to demodulate
  * @param p_out_byte pointer to a location to store the bytes
  *
  * @return void
  */
 void
-demod_byte(IQ_TYPE *p_rxp, int num_byte, uint8_t *p_out_byte)
+demod_byte(IQ_TYPE *p_rx, int num_byte, uint8_t *p_out_byte)
 {
     int     I0;
     int     Q0;
@@ -1050,10 +1118,10 @@ demod_byte(IQ_TYPE *p_rxp, int num_byte, uint8_t *p_out_byte)
         for (int j = 0; j < 8; j++)
         {
             // get the I0, Q0, I1, and Q1 samples
-            I0 = p_rxp[sample_idx];
-            Q0 = p_rxp[sample_idx + 1];
-            I1 = p_rxp[sample_idx + 2];
-            Q1 = p_rxp[sample_idx + 3];
+            I0 = p_rx[sample_idx];
+            Q0 = p_rx[sample_idx + 1];
+            I1 = p_rx[sample_idx + 2];
+            Q1 = p_rx[sample_idx + 3];
             // set the bit based on the I/Q samples
             bit_decision = (I0 * Q1 - I1 * Q0) > 0 ? 1 : 0;
             // pack the out byte with 8 bits
@@ -1067,52 +1135,60 @@ demod_byte(IQ_TYPE *p_rxp, int num_byte, uint8_t *p_out_byte)
 /*!
  * @brief search for unique bits
  *
- * @param rxp pointer to an IQ_TYPE (int8_t)
+ * @param p_rx pointer to an IQ_TYPE (int8_t)
  * @param search_len how far to search
- * @param unique_bits
- * @param unique_bits_mask
+ * @param p_unique_bits
+ * @param p_unique_bits_mask
  * @param num_bits
  *
- * @return hit_idx
+ *
+ *
+ * @return hit_index
  */
 inline int
-search_unique_bits(IQ_TYPE  *rxp,
+search_unique_bits(IQ_TYPE  *p_rx,
                    int       search_len,
-                   uint8_t  *unique_bits,
-                   uint8_t  *unique_bits_mask,
+                   uint8_t  *p_unique_bits,
+                   uint8_t  *p_unique_bits_mask,
                    const int num_bits)
 {
-    int       i;
-    int       sp;
-    int       j;
-    int       i0;
-    int       q0;
-    int       i1;
-    int       q1;
-    int       k;
-    int       p;
-    int       phase_idx;
-    bool      unequal_flag;
+    int  i;
+    int  sp;
+    int  j;
+    int  i0;
+    int  q0;
+    int  i1;
+    int  q1;
+    int  k;
+    int  p;
+    int  phase_idx;
+    bool unequal_flag;
+    // num_bits is 32 (LEN_DEMOD_BUF_ACCESS)
     const int demod_buf_len    = num_bits;
     int       demod_buf_offset = 0;
 
     // demod_buf_preamble_access[SAMPLE_PER_SYMBOL][LEN_DEMOD_BUF_PREAMBLE_ACCESS]
     // memset(demod_buf_preamble_access, 0,
     // SAMPLE_PER_SYMBOL*LEN_DEMOD_BUF_PREAMBLE_ACCESS);
+
+    // set the demod_buf_access array to all 0's
     memset(demod_buf_access, 0, (SAMPLE_PER_SYMBOL * LEN_DEMOD_BUF_ACCESS));
 
+    // increment i by 8 (4 * 2) each time
     for (i = 0; i < (search_len * SAMPLE_PER_SYMBOL * 2);
          i = i + (SAMPLE_PER_SYMBOL * 2))
     {
         sp = ((demod_buf_offset - demod_buf_len + 1) & (demod_buf_len - 1));
 
+        // increment j by 2 each time
         for (j = 0; j < (SAMPLE_PER_SYMBOL * 2); j = j + 2)
         {
-            i0 = rxp[i + j];
-            q0 = rxp[i + j + 1];
-            i1 = rxp[i + j + 2];
-            q1 = rxp[i + j + 3];
+            i0 = p_rx[i + j];
+            q0 = p_rx[i + j + 1];
+            i1 = p_rx[i + j + 2];
+            q1 = p_rx[i + j + 3];
 
+            // use j values 0, 2, 4, 6
             phase_idx = j / 2;
 
             demod_buf_access[phase_idx][demod_buf_offset]
@@ -1120,10 +1196,11 @@ search_unique_bits(IQ_TYPE  *rxp,
 
             k            = sp;
             unequal_flag = false;
+            // p values 0 - 31
             for (p = 0; p < demod_buf_len; p++)
             {
-                if (demod_buf_access[phase_idx][k] != unique_bits[p]
-                    && unique_bits_mask[p])
+                if (demod_buf_access[phase_idx][k] != p_unique_bits[p]
+                    && p_unique_bits_mask[p])
                 {
                     unequal_flag = true;
                     break;
@@ -1141,7 +1218,7 @@ search_unique_bits(IQ_TYPE  *rxp,
         demod_buf_offset = ((demod_buf_offset + 1) & (demod_buf_len - 1));
     }
 
-    // return -1 to indicate failure
+    // return -1 to indicate failing to find unique bits
     return (-1);
 }
 
@@ -1155,11 +1232,14 @@ parse_adv_pdu_payload_byte(uint8_t     *payload_byte,
     ADV_PDU_PAYLOAD_TYPE_1_3     *payload_type_1_3     = NULL;
     ADV_PDU_PAYLOAD_TYPE_5       *payload_type_5       = NULL;
     ADV_PDU_PAYLOAD_TYPE_R       *payload_type_R       = NULL;
+
     if (num_payload_byte < 6)
     {
         // payload_parse_result_str = ['Payload Too Short (only '
         // num2str(length(payload_bits)) ' bits)'];
+#if 0 // commented out for demo - SW 10/12/22
         printf("Error: Payload Too Short (only %d bytes)!\n", num_payload_byte);
+#endif
         return (-1);
     }
 
@@ -1189,11 +1269,13 @@ parse_adv_pdu_payload_byte(uint8_t     *payload_byte,
     {
         if (num_payload_byte != 12)
         {
+#if 0 // commented out for demo - SW 10/12/22
             printf(
                 "Error: Payload length %d bytes. Need to be 12 for PDU Type "
                 "%s!\n",
                 num_payload_byte,
                 ADV_PDU_TYPE_STR[pdu_type]);
+#endif
             return (-1);
         }
         payload_type_1_3 = (ADV_PDU_PAYLOAD_TYPE_1_3 *)adv_pdu_payload;
@@ -1220,11 +1302,13 @@ parse_adv_pdu_payload_byte(uint8_t     *payload_byte,
     {
         if (34 != num_payload_byte)
         {
+#if 0 // commented out for demo - SW 10/12/22      
             printf(
                 "Error: Payload length %d bytes. Need to be 34 for PDU Type "
                 "%s!\n",
                 num_payload_byte,
                 ADV_PDU_TYPE_STR[pdu_type]);
+#endif
             return (-1);
         }
         payload_type_5 = (ADV_PDU_PAYLOAD_TYPE_5 *)adv_pdu_payload;
@@ -1245,7 +1329,8 @@ parse_adv_pdu_payload_byte(uint8_t     *payload_byte,
         payload_type_5->AdvA[4] = payload_byte[7];
         payload_type_5->AdvA[5] = payload_byte[6];
 
-        // AA = reorder_bytes_str( payload_bytes((2*6+2*6+1):(2*6+2*6+2*4)) );
+        // AA = reorder_bytes_str( payload_bytes((2*6+2*6+1):(2*6+2*6+2*4))
+        // );
         payload_type_5->AA[0] = payload_byte[15];
         payload_type_5->AA[1] = payload_byte[14];
         payload_type_5->AA[2] = payload_byte[13];
@@ -1258,11 +1343,13 @@ parse_adv_pdu_payload_byte(uint8_t     *payload_byte,
         payload_type_5->CRCInit
             = ((payload_type_5->CRCInit << 8) | payload_byte[18]);
 
-        // WinSize = payload_bytes((2*6+2*6+2*4+2*3+1):(2*6+2*6+2*4+2*3+2*1));
+        // WinSize =
+        // payload_bytes((2*6+2*6+2*4+2*3+1):(2*6+2*6+2*4+2*3+2*1));
         payload_type_5->WinSize = payload_byte[19];
 
         // WinOffset = reorder_bytes_str(
-        // payload_bytes((2*6+2*6+2*4+2*3+2*1+1):(2*6+2*6+2*4+2*3+2*1+2*2)) );
+        // payload_bytes((2*6+2*6+2*4+2*3+2*1+1):(2*6+2*6+2*4+2*3+2*1+2*2))
+        // );
         payload_type_5->WinOffset = (payload_byte[21]);
         payload_type_5->WinOffset
             = ((payload_type_5->WinOffset << 8) | payload_byte[20]);
@@ -1366,7 +1453,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
         else if (pdu_type == LL_DATA2 || pdu_type == LL_CTRL)
         {
             printf(
-                "Error: LL PDU TYPE%d(%s) should not have payload length 0!\n",
+                "Error: LL PDU TYPE%d(%s) should not have payload length "
+                "0!\n",
                 pdu_type,
                 LL_PDU_TYPE_STR[pdu_type]);
             return (-1);
@@ -1386,7 +1474,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (num_payload_byte != 12)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "12!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1425,7 +1514,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (num_payload_byte != 8)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "8!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1459,7 +1549,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (num_payload_byte != 2)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "2!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1476,7 +1567,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (num_payload_byte != 23)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "23!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1516,7 +1608,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (13 != num_payload_byte)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "13!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1547,7 +1640,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (1 != num_payload_byte)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "1!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1563,7 +1657,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (9 != num_payload_byte)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "9!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1587,7 +1682,8 @@ parse_ll_pdu_payload_byte(uint8_t    *payload_byte,
             if (num_payload_byte != 6)
             {
                 printf(
-                    "Error: LL CTRL PDU TYPE%d(%s) should have payload length "
+                    "Error: LL CTRL PDU TYPE%d(%s) should have payload "
+                    "length "
                     "6!\n",
                     ctrl_pdu_type,
                     LL_CTRL_PDU_PAYLOAD_TYPE_STR[ctrl_pdu_type]);
@@ -1653,8 +1749,8 @@ parse_adv_pdu_header_byte(uint8_t      *byte_in,
 {
     //% pdy_type_str = {'ADV_IND', 'ADV_DIRECT_IND', 'ADV_NONCONN_IND',
     //'SCAN_REQ', 'SCAN_RSP', 'CONNECT_REQ', 'ADV_SCAN_IND', 'Reserved',
-    //'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved',
-    //'Reserved'}; pdu_type = bi2de(bits(1:4), 'right-msb');
+    //'Reserved', 'Reserved', 'Reserved', 'Reserved', 'Reserved',
+    //'Reserved', 'Reserved'}; pdu_type = bi2de(bits(1:4), 'right-msb');
     (*pdu_type) = (ADV_PDU_TYPE)(byte_in[0] & 0x0F);
     //% disp(['   PDU Type: ' pdy_type_str{pdu_type+1}]);
 
@@ -1914,15 +2010,19 @@ print_adv_pdu_payload(void        *adv_pdu_payload,
                       int          payload_len,
                       bool         crc_flag)
 {
-    int                           i;
-    ADV_PDU_PAYLOAD_TYPE_5       *adv_pdu_payload_5;
+    int                     i;
+    ADV_PDU_PAYLOAD_TYPE_5 *adv_pdu_payload_5;
+    // commented out for demo - SW 10/12/22
+#if 0
     ADV_PDU_PAYLOAD_TYPE_1_3     *adv_pdu_payload_1_3;
     ADV_PDU_PAYLOAD_TYPE_0_2_4_6 *adv_pdu_payload_0_2_4_6;
     ADV_PDU_PAYLOAD_TYPE_R       *adv_pdu_payload_R;
+#endif
     // print payload out
     if (pdu_type == ADV_IND || pdu_type == ADV_NONCONN_IND
         || pdu_type == SCAN_RSP || pdu_type == ADV_SCAN_IND)
     {
+#if 0
         adv_pdu_payload_0_2_4_6
             = (ADV_PDU_PAYLOAD_TYPE_0_2_4_6 *)(adv_pdu_payload);
         printf("AdvA:");
@@ -1935,9 +2035,11 @@ print_adv_pdu_payload(void        *adv_pdu_payload,
         {
             printf("%02x", adv_pdu_payload_0_2_4_6->Data[i]);
         }
+#endif
     }
     else if (pdu_type == ADV_DIRECT_IND || pdu_type == SCAN_REQ)
     {
+#if 0 // added for demo
         adv_pdu_payload_1_3 = (ADV_PDU_PAYLOAD_TYPE_1_3 *)(adv_pdu_payload);
         printf("A0:");
         for (i = 0; i < 6; i++)
@@ -1949,6 +2051,7 @@ print_adv_pdu_payload(void        *adv_pdu_payload,
         {
             printf("%02x", adv_pdu_payload_1_3->A1[i]);
         }
+#endif
     }
     else if (pdu_type == CONNECT_REQ)
     {
@@ -1984,9 +2087,13 @@ print_adv_pdu_payload(void        *adv_pdu_payload,
         }
         printf(
             " Hop:%d SCA:%d", adv_pdu_payload_5->Hop, adv_pdu_payload_5->SCA);
+
+        printf(" CRC%d\n", crc_flag);
     }
     else
     {
+
+#if 0
         adv_pdu_payload_R = (ADV_PDU_PAYLOAD_TYPE_R *)(adv_pdu_payload);
         printf("Byte:");
         for (i = 0; i < (payload_len); i++)
@@ -1994,22 +2101,31 @@ print_adv_pdu_payload(void        *adv_pdu_payload,
             printf("%02x", adv_pdu_payload_R->payload_byte[i]);
         }
     }
-    printf(" CRC%d\n", crc_flag);
+        printf(" CRC%d\n", crc_flag);
+
+#endif
+    }
 }
 
 /**
  * @brief receive and parse a packet
  *
- * @param p_rxp_in pointer to a buffer for IQ values
- * @param buf_len the length of the buffer
+ * @param p_rx_in pointer to a buffer for IQ values
+ * @param buf_len the length of the buffer, 16632 is the value set for buf_len
  * @param channel_number channel to receive on
  * @param access_addr the access address
  * @param crc_init
  * @param verbose_flag
  * @param raw_flag
+ *
+ * Parse the contents of the receive buffer, the receiver function is called
+ * alternating with the first half and the second half of the rx_buf.
+ *
+ * @return void
  */
+
 void
-receiver(IQ_TYPE *p_rxp_in,
+receiver(IQ_TYPE *p_rx_in,
          int      buf_len,
          int      channel_number,
          uint32_t access_addr,
@@ -2021,17 +2137,19 @@ receiver(IQ_TYPE *p_rxp_in,
     static ADV_PDU_PAYLOAD_TYPE_R   adv_pdu_payload;
     static LL_DATA_PDU_PAYLOAD_TYPE ll_data_pdu_payload;
     static struct timeval           time_current_pkt, time_pre_pkt;
+
+    // 3008 + 32768 / 2 = 3008 + 16384 = 19392
     const int demod_buf_len = LEN_BUF_MAX_NUM_PHY_SAMPLE + (LEN_BUF / 2);
 
     ADV_PDU_TYPE adv_pdu_type;
     LL_PDU_TYPE  ll_pdu_type;
 
-    // set the p_rxp to start at p_rxp_in
-    IQ_TYPE *p_rxp           = p_rxp_in;
-    IQ_TYPE *p_start_ble_pkt = p_rxp;
+    // set the p_rx to start at p_rx_in
+    IQ_TYPE *p_rx            = p_rx_in;
+    IQ_TYPE *p_start_ble_pkt = p_rx;
 
     int  num_demod_byte;
-    int  hit_idx;
+    int  hit_index;
     int  buf_len_eaten;
     int  adv_tx_add;
     int  adv_rx_add;
@@ -2057,51 +2175,88 @@ receiver(IQ_TYPE *p_rxp_in,
     buf_len_eaten = 0;
 
     // loop until break
+    // will break when there are no unique bits in the p_rx buffer
     for (;;)
     {
 
         // search for unique bits within the receive buffer
-        hit_idx = search_unique_bits(p_rxp,
-                                     num_symbol_left,
-                                     access_bit,
-                                     access_bit_mask,
-                                     LEN_DEMOD_BUF_ACCESS);
-        if (-1 == hit_idx)
+        hit_index = search_unique_bits(p_rx,
+                                       num_symbol_left,
+                                       access_bit,
+                                       access_bit_mask,
+                                       LEN_DEMOD_BUF_ACCESS);
+        if (-1 == hit_index)
         {
             break;
         }
         // pkt_count++;
-        // printf("hit %d\n", hit_idx);
+        // printf("hit %d\n", hit_index);
 
-        // printf("%d %d %d %d %d %d %d %d\n", rxp[hit_idx+0], rxp[hit_idx+1],
-        // rxp[hit_idx+2], rxp[hit_idx+3], rxp[hit_idx+4], rxp[hit_idx+5],
-        // rxp[hit_idx+6], rxp[hit_idx+7]);
+        // printf("%d %d %d %d %d %d %d %d\n", p_rx[hit_index+0],
+        // p_rx[hit_index+1], p_rx[hit_index+2], p_rx[hit_index+3],
+        // p_rx[hit_index+4], p_rx[hit_index+5], p_rx[hit_index+6],
+        // p_rx[hit_index+7]);
 
         // advance the buffer length consumed by the hit index value
 
-        // buf length eaten specifies where the first hit occurs
-        buf_len_eaten   = buf_len_eaten + hit_idx;
-        p_start_ble_pkt = p_rxp + buf_len_eaten - 100;
+        // buf length eaten specifies where the hit occurs
+        buf_len_eaten = buf_len_eaten + hit_index;
+
+        // p_start_ble_pkt points to the starting point of the packet
+        // in the rx_buf (pointed to by p_rx)
+        p_start_ble_pkt = p_rx + buf_len_eaten - 100;
+
+        // check if the p_start_ble_pkt is outside of the buffer, if yes, then
+        // break
+
+#if DEBUG
+        if (((void *)rx_buf + LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE)
+            < (void *)p_start_ble_pkt)
+        {
+#if DEBUG
+            fprintf(stderr,
+                    "Error start address is outside of the receive "
+                    "buffer.\n");
+            fprintf(stderr,
+                    "end of rx_buf:\t\t\t\t%p\n",
+                    (void *)rx_buf + LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE);
+            fprintf(
+                stderr, "p_start_ble_pkt:\t\t\t%p\n", (void *)p_start_ble_pkt);
+            fprintf(stderr,
+                    "pointer difference: %ld\n",
+                    ((void *)rx_buf + LEN_BUF + LEN_BUF_MAX_NUM_PHY_SAMPLE)
+                        - (void *)p_start_ble_pkt);
+
+#endif
+            break;
+        }
+        else
+        {
+            // fprintf(stderr, "Good buffer alignment\n");
+        }
+#endif
 
         // copy the data off so that it doesn't get overwritten
         IQ_TYPE  tmp_rx_buf[TMP_BUF_SIZE];
         IQ_TYPE *p_tmp_rx_buf = tmp_rx_buf;
 
-#if DEBUG
-        // copy the memory to a temp buffer to see if it is being overwritten
-        memcpy((void *)tmp_rx_buf, (void *)p_start_ble_pkt, TMP_BUF_SIZE);
+        // copy the memory to a temp buffer to see if it is being
+        // overwritten
 
-#endif
+        // check the bounds of the buffer to make sure that it is contained
+        // within the buffer
+        tmp_buf_cpy((void *)tmp_rx_buf, (void *)p_start_ble_pkt, TMP_BUF_SIZE);
 
         // printf("%d\n", buf_len_eaten);
 
+        // advance the buf_length_eaten
         buf_len_eaten
             = buf_len_eaten
               + 8 * NUM_ACCESS_ADDR_BYTE * 2
                     * SAMPLE_PER_SYMBOL; // move to beginning of PDU header
 
-        // p_rxp now points to the start of the PDU header for a BLE packet
-        p_rxp = p_rxp_in + buf_len_eaten;
+        // p_rx now points to the start of the PDU header for a BLE packet
+        p_rx = p_rx_in + buf_len_eaten;
 
         if (raw_flag)
         {
@@ -2120,8 +2275,8 @@ receiver(IQ_TYPE *p_rxp_in,
             = buf_len_eaten
               + SYMBOL_PER_BYTE * num_demod_byte * 2 * SAMPLE_PER_SYMBOL;
 
-        // this could lose a sample if the buf_len_eaten is on the border of a
-        // demod_buf_len
+        // this could lose a sample if the buf_len_eaten is on the border of
+        // a demod_buf_len
         if (buf_len_eaten > demod_buf_len)
         {
             break;
@@ -2129,7 +2284,7 @@ receiver(IQ_TYPE *p_rxp_in,
 
         // for a non-raw packet, demodulate 2 bytes
         // we will advance the buffer by
-        demod_byte(p_rxp, num_demod_byte, tmp_byte);
+        demod_byte(p_rx, num_demod_byte, tmp_byte);
 
         if (!raw_flag)
         {
@@ -2140,7 +2295,7 @@ receiver(IQ_TYPE *p_rxp_in,
                           tmp_byte);
         }
 
-        p_rxp = p_rxp_in + buf_len_eaten;
+        p_rx = p_rx_in + buf_len_eaten;
 
         num_symbol_left = (buf_len - buf_len_eaten) / (SAMPLE_PER_SYMBOL * 2);
 
@@ -2158,6 +2313,7 @@ receiver(IQ_TYPE *p_rxp_in,
                    pkt_count,
                    channel_number,
                    access_addr);
+
             printf("Raw:");
             for (i = 0; i < 42; i++)
             {
@@ -2214,13 +2370,13 @@ receiver(IQ_TYPE *p_rxp_in,
         }
 
         // demodulate the payload
-        demod_byte(p_rxp, num_demod_byte, tmp_byte + 2);
+        demod_byte(p_rx, num_demod_byte, tmp_byte + 2);
         scramble_byte(tmp_byte + 2,
                       num_demod_byte,
                       scramble_table[channel_number] + 2,
                       tmp_byte + 2);
 
-        p_rxp           = p_rxp_in + buf_len_eaten;
+        p_rx            = p_rx_in + buf_len_eaten;
         num_symbol_left = (buf_len - buf_len_eaten) / (SAMPLE_PER_SYMBOL * 2);
 
         crc_flag = crc_check(tmp_byte, payload_len + 2, crc_init);
@@ -2232,15 +2388,25 @@ receiver(IQ_TYPE *p_rxp_in,
         time_diff    = TimevalDiff(&time_current_pkt, &time_pre_pkt);
         time_pre_pkt = time_current_pkt;
 
-        printf("%07dus Pkt%03d Ch%d AA:%08x ",
-               time_diff,
-               pkt_count,
-               channel_number,
-               access_addr);
+        // SW - 10/26/22 - removed because check's for CONNECT_REQ later
 
-        // use the temporary buffer that the samples are stored in to write to
-        // disk this seems to avoid having the samples overwritten by the hackrf
-        // reads
+        if (adv_flag
+            && (CONNECT_REQ == adv_pdu_type || ADV_IND == adv_pdu_type))
+        {
+            // add CONNECT_REQ check for demo - SW 2022-10-11
+            printf("\n");
+            printf("%07dus Pkt%03d Ch%d AA:%08x ",
+                   time_diff,
+                   pkt_count,
+                   channel_number,
+                   access_addr);
+        }
+
+        // use the temporary buffer that the samples are stored in to write
+        // to disk this seems to avoid having the samples overwritten by the
+        // hackrf reads
+
+#if 0 // move this to the connect_req area - SW 10/12/22
         if (NULL != filename_bin_pkt)
         {
             // create the file name
@@ -2251,7 +2417,7 @@ receiver(IQ_TYPE *p_rxp_in,
                      filename_bin_pkt,
                      (int)time_current_pkt.tv_sec,
                      (int)time_current_pkt.tv_usec);
-            int num_samples = p_rxp - p_start_ble_pkt;
+            int num_samples = p_rx - p_start_ble_pkt;
 
             fprintf(stderr,
                     "Writing binary samples for file: %s\n%d samples\n",
@@ -2261,8 +2427,8 @@ receiver(IQ_TYPE *p_rxp_in,
 #if DEBUG
             // search for some larger values
             // the receive buffer may be overwritten by new samples
-            // so we saved off 4096 samples when recieved to extract the signal
-            // from the temp buf
+            // so we saved off 4096 samples when recieved to extract the
+            // signal from the temp buf
             IQ_TYPE *found_start_addr = byte_search(p_tmp_rx_buf);
             int      DISTANCE         = found_start_addr - p_tmp_rx_buf;
 
@@ -2281,28 +2447,36 @@ receiver(IQ_TYPE *p_rxp_in,
             save_bin_phy_sample(
                 p_tmp_rx_buf, num_samples, filename_bin_pkt_out);
         }
+#endif
 
         if (NULL != filename_pcap)
+        {
             write_packet_to_file(fh_pcap_store,
                                  payload_len + 2,
                                  tmp_byte,
                                  channel_number,
                                  access_addr);
+        }
 
         if (adv_flag)
         {
-            printf("ADV_PDU_t%d:%s T%d R%d PloadL%d ",
-                   adv_pdu_type,
-                   ADV_PDU_TYPE_STR[adv_pdu_type],
-                   adv_tx_add,
-                   adv_rx_add,
-                   payload_len);
+            // add CONNECT_REQ check for demo - SW 2022-10-11
+            if (CONNECT_REQ == adv_pdu_type || ADV_IND == adv_pdu_type)
+            {
 
-            if (parse_adv_pdu_payload_byte(tmp_byte + 2,
-                                           payload_len,
-                                           adv_pdu_type,
-                                           (void *)(&adv_pdu_payload))
-                != 0)
+                printf("ADV_PDU_t%d:%s T%d R%d PloadL%d ",
+                       adv_pdu_type,
+                       ADV_PDU_TYPE_STR[adv_pdu_type],
+                       adv_tx_add,
+                       adv_rx_add,
+                       payload_len);
+            }
+
+            if (0
+                != parse_adv_pdu_payload_byte(tmp_byte + 2,
+                                              payload_len,
+                                              adv_pdu_type,
+                                              (void *)(&adv_pdu_payload)))
             {
                 continue;
             }
@@ -2312,21 +2486,108 @@ receiver(IQ_TYPE *p_rxp_in,
                                   crc_flag);
 
             // check if the type is a CONNECT_REQ and then check the AdvA
-            if (CONNECT_REQ == adv_pdu_type)
+            if (CONNECT_REQ == adv_pdu_type || ADV_IND == adv_pdu_type)
             {
                 uint64_t pdu_adva = 0;
-                memcpy(&pdu_adva,
-                       ((ADV_PDU_PAYLOAD_TYPE_5 *)(&adv_pdu_payload))->AdvA,
-                       6);
-                // 0x0000806fb05689a0 - target address, need to rearrange the
-                // bytes
-                uint64_t target_pdu_adva = 0x0000a08956b06f80;
+                memcpy(
+                    &pdu_adva,
+                    ((ADV_PDU_PAYLOAD_TYPE_0_2_4_6 *)(&adv_pdu_payload))->AdvA,
+                    6);
+                //    change to be the other type of payload
+                //    memcpy(&pdu_adva,
+                //    ((ADV_PDU_PAYLOAD_TYPE_5 *)(&adv_pdu_payload))->AdvA,
+                //    6);
+                // 0x0000806fb05689a0 - target address, need to rearrange
+                // the bytes
+                // this is specific to the lock that we are using
+                // uint64_t target_pdu_adva = 0x0000a08956b06f80;
+
+                // uint64_t target_pdu_adva = 0x0000ca2884e32c6b;
+
+                uint64_t target_pdu_adva = 0x00000bc8bbbd176c;
 
                 if (pdu_adva == target_pdu_adva)
                 {
                     fprintf(stderr,
-                            "\n\n\n FOUND A CON REQ TO THE LOCK!!! SAVE THE "
-                            "SAMPLE\n\n\n");
+                            "\n\n\n[+] Found a ADV_IND or a CONNECT_REQ to the "
+                            "lock\n\n\n\n");
+
+                    if (NULL != filename_bin_pkt)
+                    {
+                        // create the file name
+                        char filename_bin_pkt_out[MAX_FILENAME_LENGTH] = { 0 };
+                        snprintf(filename_bin_pkt_out,
+                                 MAX_FILENAME_LENGTH,
+                                 "%s-%d_%d",
+                                 filename_bin_pkt,
+                                 (int)time_current_pkt.tv_sec,
+                                 (int)time_current_pkt.tv_usec);
+
+                        // sometimes the difference between p_rx and
+                        // p_start_ble_pkt is negative the p_start_ble_pkt is
+                        // greater than p_rx
+
+                        // what if I am wrapping around the buffer?
+                        int num_samples = p_rx - p_start_ble_pkt;
+                        fprintf(stderr, "[+] Found %d samples.\n", num_samples);
+                        if (0 > num_samples)
+                        {
+                            // num_samples is negative, currect for this issue
+
+                            int first_samples = ((void *)rx_buf + LEN_BUF
+                                                 + LEN_BUF_MAX_NUM_PHY_SAMPLE)
+                                                - (void *)p_start_ble_pkt;
+                            int second_samples = (void *)p_rx - (void *)rx_buf;
+                            num_samples        = first_samples + second_samples;
+#if DEBUG
+
+                            fprintf(stderr,
+                                    "\n\n\n\nSTART rx_buf\t\t%p\n",
+                                    (void *)rx_buf);
+                            fprintf(stderr,
+                                    "END rx_buf\t\t%p\n",
+                                    (void *)rx_buf + LEN_BUF
+                                        + LEN_BUF_MAX_NUM_PHY_SAMPLE);
+                            fprintf(stderr, "p_rx\t\t\t%p\n", (void *)p_rx);
+                            fprintf(stderr,
+                                    "p_start_ble_pkt\t\t%p\n",
+                                    (void *)p_start_ble_pkt);
+
+                            fprintf(stderr,
+                                    "\n\n\n\nfirst_samples: %d\n",
+                                    first_samples);
+                            fprintf(
+                                stderr, "second_samples: %d\n", second_samples);
+                            fprintf(stderr,
+                                    "CORRECTED Value of num_samples: %d\n",
+                                    num_samples);
+#endif
+                        }
+                        else
+                        {
+
+// address of p_rx
+// address of p_start_ble_pkt
+#if DEBUG
+                            fprintf(
+                                stderr, "\nValue of p_rx: %p\n", (void *)p_rx);
+                            fprintf(stderr,
+                                    "Value of p_start_ble_pkt: %p\n",
+                                    (void *)p_start_ble_pkt);
+#endif
+
+                            fprintf(stderr,
+                                    "Writing binary samples for file: %s\n%d "
+                                    "samples\n",
+                                    filename_bin_pkt_out,
+                                    num_samples);
+
+                            // save the samples to a file
+                            save_bin_phy_sample(p_tmp_rx_buf,
+                                                num_samples,
+                                                filename_bin_pkt_out);
+                        }
+                    }
                 }
             }
         }
@@ -2427,11 +2688,13 @@ receiver_controller(void     *rf_dev,
                     = crc_init_reorder(receiver_status.crc_init);
                 (*access_addr) = receiver_status.access_addr;
 
-                printf("Hop: next ch %d freq %ldMHz access %08x crcInit %06x\n",
-                       hop_chan,
-                       freq_hz / 1000000,
-                       receiver_status.access_addr,
-                       receiver_status.crc_init);
+                printf(
+                    "Hop: next ch %d freq %ldMHz access %08x crcInit "
+                    "%06x\n",
+                    hop_chan,
+                    freq_hz / 1000000,
+                    receiver_status.access_addr,
+                    receiver_status.crc_init);
 
                 state = 1;
                 printf("Hop: next state %d\n", state);
@@ -2554,7 +2817,7 @@ main(int argc, char **argv)
     uint32_t crc_init_internal;
     bool     run_flag = false;
     void    *rf_dev;
-    IQ_TYPE *p_rxp;
+    IQ_TYPE *p_rx;
     int      result;
 
     parse_commandline(argc,
@@ -2579,7 +2842,8 @@ main(int argc, char **argv)
     uint32_to_bit_array(access_addr_mask, access_bit_mask);
 
     printf(
-        "Cmd line input: chan %d, freq %ldMHz, access addr %08x, crc init %06x "
+        "Cmd line input: chan %d, freq %ldMHz, access addr %08x, crc init "
+        "%06x "
         "raw %d verbose %d rx %ddB (%s) file=%s binary packet file base "
         "name=%s\n",
         chan,
@@ -2593,10 +2857,17 @@ main(int argc, char **argv)
         filename_pcap,
         filename_bin_pkt);
 
-    if (filename_pcap != NULL)
+    if (NULL != filename_pcap)
     {
         printf("will store packets to: %s\n", filename_pcap);
         init_pcap_file();
+    }
+
+    // specify that we will write raw data to a files with specified prefix
+    if (NULL != filename_bin_pkt)
+    {
+        printf("will store found raw samples with prefix: %s\n",
+               filename_bin_pkt);
     }
 
     // run cyclic recv in background
@@ -2611,7 +2882,7 @@ main(int argc, char **argv)
 
     if (EXIT_SUCCESS != result)
     {
-        if (rf_dev != NULL)
+        if (NULL != rf_dev)
         {
             goto PROGRAM_QUIT;
         }
@@ -2650,8 +2921,8 @@ main(int argc, char **argv)
         rx_buf_offset); rx_buf_offset_old = rx_buf_offset;
         }
          * */
-        // total buf len LEN_BUF = (8*4096)*2 =  (~ 8ms); tail length
-        // MAX_NUM_PHY_SAMPLE*2=LEN_BUF_MAX_NUM_PHY_SAMPLE
+        // total buf len LEN_BUF = (8 * 4096) * 2 =  (~ 8ms); tail length
+        // MAX_NUM_PHY_SAMPLE * 2 = LEN_BUF_MAX_NUM_PHY_SAMPLE
 
         rx_buf_offset_tmp = rx_buf_offset - LEN_BUF_MAX_NUM_PHY_SAMPLE;
         // what is cross point 0?
@@ -2664,13 +2935,14 @@ main(int argc, char **argv)
             // (LEN_BUF/2), LEN_BUF_MAX_NUM_PHY_SAMPLE);
             phase = 0;
 
-            // copy from the start of the rx_buf to the memory address at
-            // LEN_BUF into rx_buf
-
+            // copy the first LEN_BUF_MAX_NUM_PHY_SAMPLE (3008) from the start
+            // of the buffer and append them to the end of the buffer
             memcpy((void *)(rx_buf + LEN_BUF),
                    (void *)rx_buf,
                    LEN_BUF_MAX_NUM_PHY_SAMPLE * sizeof(IQ_TYPE));
-            p_rxp    = (IQ_TYPE *)(rx_buf + (LEN_BUF / 2));
+
+            // set p_rx to start halfway through the buffer
+            p_rx     = (IQ_TYPE *)(rx_buf + (LEN_BUF / 2));
             run_flag = true;
         }
 
@@ -2681,7 +2953,8 @@ main(int argc, char **argv)
             // (LEN_BUF/2), LEN_BUF_MAX_NUM_PHY_SAMPLE);
             phase = 1;
 
-            p_rxp    = (IQ_TYPE *)rx_buf;
+            // set p_rx to start at the beginning of the buffer
+            p_rx     = (IQ_TYPE *)rx_buf;
             run_flag = true;
         }
 #if OFFLINE_TEST
@@ -2695,16 +2968,16 @@ main(int argc, char **argv)
 
 #if OFFLINE_TEST
             // save data to an offline file
-            // what is the format of this data as compared with the data for the
-            // UCSD researchers?
+            // what is the format of this data as compared with the data for
+            // the UCSD researchers?
             // ------------------------for offline test
             // -------------------------------------
             // save_phy_sample(rx_buf+buf_sp, LEN_BUF/2,
             // "/home/user/BTLE/matlab/sample_iq_4msps.txt");
 
-            // this contains information that stored as a signed integer value
-            // check how the ucsd researchers save their data
-            // they most likely used a byte to store the data
+            // this contains information that stored as a signed integer
+            // value check how the ucsd researchers save their data they
+            // most likely used a byte to store the data
             load_phy_sample(
                 tmp_buf, 2097152, "/home/user/BTLE/matlab/sample_iq_4msps.txt");
             receiver(tmp_buf, 2097152, 37, 0x8E89BED6, 0x555555, 1, 0);
@@ -2714,9 +2987,11 @@ main(int argc, char **argv)
 #endif
 
             // REAL ONLINE RUN
-            // receiver(rxp, LEN_BUF_MAX_NUM_PHY_SAMPLE+(LEN_BUF/2), chan);
+            // receiver(p_rx, LEN_BUF_MAX_NUM_PHY_SAMPLE+(LEN_BUF/2), chan);
             // start a receiver connected to the hackrf
-            receiver(p_rxp,
+
+            // receive 31 * 2 * 4 (248) + 32768/2 (16384) = 16632 samples
+            receiver(p_rx,
                      (LEN_DEMOD_BUF_ACCESS - 1) * 2 * SAMPLE_PER_SYMBOL
                          + (LEN_BUF) / 2,
                      chan,

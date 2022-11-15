@@ -21,7 +21,7 @@
 
 # Based heavily upon the libftdi cmake setup.
 
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.20)
 project(btle-tools C)
 set(MAJOR_VERSION 0)
 set(MINOR_VERSION 5)
@@ -29,6 +29,9 @@ set(PACKAGE btle-tools)
 set(VERSION_STRING ${MAJOR_VERSION}.${MINOR_VERSION})
 set(VERSION ${VERSION_STRING})
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/../cmake/modules)
+
+# used to generate .json file for clang-tidy
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(MSVC)
 # include_directories(getopt)
